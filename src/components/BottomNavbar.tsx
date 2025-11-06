@@ -1,4 +1,5 @@
-import { Home, ShoppingCart, Phone, Package, User } from "lucide-react";
+
+import { Home, ShoppingBag, Phone, Package, User } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 export default function BottomNavbar() {
@@ -16,7 +17,7 @@ export default function BottomNavbar() {
                     Home
                 </Link>
                 <Link to="/products" className="flex flex-col items-center text-xs text-gray-600 hover:text-brand-red">
-                    <ShoppingCart className="h-5 w-5 mb-0.5" />
+                    <ShoppingBag className="h-5 w-5 mb-0.5" />
                     Products
                 </Link>
 

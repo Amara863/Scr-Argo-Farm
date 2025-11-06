@@ -12,9 +12,9 @@ dotenv.config();
 
 const router = express.Router();
 
-// Initialize Supabase client
+// Initialize Supabase client with service role key for backend operations
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Using service role key for enhanced permissions
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Initialize Razorpay instance

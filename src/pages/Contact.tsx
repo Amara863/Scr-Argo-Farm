@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PhoneCall, Mail, MapPin, Send, Clock, Users, CheckCircle } from 'lucide-react';
 
 const Contact = () => {
@@ -285,10 +286,13 @@ const Contact = () => {
                     <PhoneCall className="h-5 w-5 mr-2" />
                     Call to Order
                   </a>
-                  <button className="flex-1 border-2 border-orange-600 text-orange-600 hover:bg-orange-600 hover:text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 flex items-center justify-center">
+                  <Link 
+                    to="/products"
+                    className="flex-1 border-2 border-orange-600 text-orange-600 hover:bg-orange-600 hover:text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 flex items-center justify-center"
+                  >
                     <Users className="h-5 w-5 mr-2" />
                     View Products
-                  </button>
+                  </Link>
                 </div>
               </div>
             </div>

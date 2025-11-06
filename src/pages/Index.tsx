@@ -19,11 +19,15 @@ const Index = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('*')
+        .select('*, stock_quantity, min_stock_level')
         .limit(4);
       
       if (error) throw error;
-      return data as Product[];
+      return data.map(product => ({
+        ...product,
+        stock_quantity: product.stock_quantity ?? 0,
+        min_stock_level: product.min_stock_level ?? 10
+      })) as Product[];
     },
   });
 
@@ -115,17 +119,28 @@ const Index = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                id={product.id}
-                title={product.title}
-                image={product.image}
-                price={product.price}
-                unit={product.unit}
-                description={product.description}
-              />
-            ))}
+            {products.map((product) => {
+              // Calculate stock status
+              const stockStatus = product.stock_quantity <= 0 
+                ? 'OUT_OF_STOCK'
+                : product.stock_quantity <= product.min_stock_level
+                ? 'LOW_STOCK'
+                : 'IN_STOCK';
+
+              return (
+                <ProductCard
+                  key={product.id}
+                  id={product.id}
+                  title={product.title}
+                  image={product.image}
+                  price={product.price}
+                  unit={product.unit}
+                  description={product.description}
+                  stockQuantity={product.stock_quantity}
+                  stockStatus={stockStatus}
+                />
+              );
+            })}
           </div>
 
           <div className="text-center mt-12">
