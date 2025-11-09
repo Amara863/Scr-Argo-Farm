@@ -500,10 +500,10 @@ const ProductDetail = () => {
             <div className="flex flex-col sm:flex-row gap-4 mb-8">
               <Button 
                 onClick={handleAddToCart} 
-                disabled={!user || isAddedToCart || isAddingToCart || isOutOfStock}
+                disabled={isAddedToCart || isAddingToCart || isOutOfStock}
                 className={isOutOfStock ? 'bg-gray-400 hover:bg-gray-400 cursor-not-allowed' : ''}
               >
-                {!user ? 'Login Required' : isOutOfStock ? 'Out of Stock' : isAddedToCart ? (
+                {isOutOfStock ? 'Out of Stock' : isAddedToCart ? (
                   <>
                     <Check className="mr-2 h-5 w-5" />
                     Added to Cart
