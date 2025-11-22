@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import sahiwal from "../../public/sahiwal.png";
 import { supabase } from "../integrations/supabase/client";
+import OfflineCard from "@/components/OfflineCard";
 
 // Updated Product interface to match Admin component exactly with live stock
 interface Product {
@@ -37,9 +38,27 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 
 const Products = () => {
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  // Online/offline state
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
   const queryClient = useQueryClient();
 
   // Set up real-time subscription for live stock updates
+  useEffect(() => {
+    // Listen for online/offline events
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    // Set initial state in case it changed before listeners attached
+    setIsOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
   useEffect(() => {
     const subscription = supabase
       .channel("products_realtime")
@@ -221,7 +240,11 @@ const Products = () => {
 
           {/* Product Grid - Moved inside the same section */}
           <div className="mt-8">
-            {isLoading ? (
+            {isLoading && !isOnline ? (
+              <div className="text-center py-8">
+                <OfflineCard message="You are offline. Please check your internet connection to view products." />
+              </div>
+            ) : isLoading ? (
               <div className="text-center py-8">
                 <div className="inline-flex items-center px-4 py-2 font-semibold leading-6 text-sm shadow rounded-md text-blue-500 bg-blue-100 transition ease-in-out duration-150">
                   <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -230,6 +253,10 @@ const Products = () => {
                   </svg>
                   Loading products and live stock data...
                 </div>
+              </div>
+            ) : error && !isOnline ? (
+              <div className="text-center py-8">
+                <OfflineCard message="You are offline. Please check your internet connection to view products." />
               </div>
             ) : error ? (
               <div className="text-center py-8">

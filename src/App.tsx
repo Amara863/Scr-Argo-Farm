@@ -28,10 +28,36 @@ import ShippingPolicy from "./pages/ShippingPolicy";
 import Terms from "./pages/Terms";
 import UserProfile from "./pages/UserProfile.tsx";
 import BottomNavbar from "./components/BottomNavbar";
+import OfflineCard from "@/components/OfflineCard";
+import { useEffect, useState } from "react";
 const queryClient = new QueryClient();
 
 // Create a separate component for the app content that uses the language context
 const AppContent = () => {
+  // Global online/offline state
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    setIsOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  if (!isOnline) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-brand-cream">
+        <OfflineCard message="You are offline. Please check your internet connection to use the website." />
+      </div>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
