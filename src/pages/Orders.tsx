@@ -9,6 +9,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
@@ -80,6 +81,7 @@ interface Order {
   state: string;
   zip_code: string;
   payment_method: string;
+  delivery_otp: string | null;
   order_items: OrderItem[];
 }
 
@@ -87,6 +89,13 @@ const Orders: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [selectedOtp, setSelectedOtp] = useState<string | null>(null);
+  const [showOtpModal, setShowOtpModal] = useState(false);
+
+  const handleShowOtp = (otp: string) => {
+    setSelectedOtp(otp);
+    setShowOtpModal(true);
+  };
 
   const toggleOrderExpansion = (orderId: string) => {
     setExpandedOrders(prev => {
@@ -124,6 +133,7 @@ const Orders: React.FC = () => {
             state,
             zip_code,
             payment_method,
+            delivery_otp,
             order_items (
               id, 
               product_id, 
@@ -158,6 +168,7 @@ const Orders: React.FC = () => {
               state,
               zip_code,
               payment_method,
+              delivery_otp,
               order_items (
                 id, 
                 product_id, 
@@ -315,25 +326,35 @@ const Orders: React.FC = () => {
                       </div>
                     </div>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleOrderExpansion(order?.id)}
-                      className="ml-4 flex items-center gap-1 text-gray-600 hover:text-gray-900 text-xs sm:text-sm"
-
-                    >
-                      {isExpanded ? (
-                        <>
-                          <ChevronUp className="h-4 w-4" />
-                          Less Details
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="h-4 w-4" />
-                          More Details
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex flex-col items-end gap-2 ml-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
+                        disabled={!order.delivery_otp}
+                        className={`min-w-[110px] rounded-md text-xs sm:text-sm transition-all ${order.delivery_otp ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100' : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'}`}
+                      >
+                        {order.delivery_otp ? 'View OTP' : 'OTP pending'}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => toggleOrderExpansion(order?.id)}
+                        className="flex items-center gap-1 text-gray-600 hover:text-gray-900 text-xs sm:text-sm"
+                      >
+                        {isExpanded ? (
+                          <>
+                            <ChevronUp className="h-4 w-4" />
+                            Less Details
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-4 w-4" />
+                            More Details
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
 
@@ -478,6 +499,24 @@ const Orders: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* OTP Modal */}
+      <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
+        <DialogContent className="sm:max-w-lg w-full rounded-3xl bg-white p-6 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle>Delivery OTP</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-4 py-2">
+            <p className="text-base text-gray-600">Your delivery OTP is ready.</p>
+            <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-blue-50 px-6 py-4 text-4xl font-semibold tracking-widest text-blue-700 shadow-sm">
+              {selectedOtp}
+            </div>
+            <p className="text-sm text-gray-600">
+              Share this code with the delivery person to complete your order.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </motion.main>
   );
 };
