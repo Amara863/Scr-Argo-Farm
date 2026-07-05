@@ -14,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { CheckCircle, ChevronDown, ChevronUp, Clock, Package, Truck, XCircle } from 'lucide-react';
+import { CheckCircle, ChevronDown, ChevronUp, Clock, Package, Truck, XCircle, Star } from 'lucide-react';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -36,6 +36,11 @@ const STATUS_CONFIG = {
     label: 'Shipped'
   },
   delivered: {
+    color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    icon: Package,
+    label: 'Delivered'
+  },
+  done: {
     color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     icon: Package,
     label: 'Delivered'
@@ -91,6 +96,11 @@ const Orders: React.FC = () => {
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [selectedOtp, setSelectedOtp] = useState<string | null>(null);
   const [showOtpModal, setShowOtpModal] = useState(false);
+  
+  // Review control states
+  const [reviewOrderId, setReviewOrderId] = useState<string | null>(null);
+  const [rating, setRating] = useState<number>(5);
+  const [comment, setComment] = useState<string>('');
 
   const handleShowOtp = (otp: string) => {
     setSelectedOtp(otp);
@@ -109,14 +119,12 @@ const Orders: React.FC = () => {
     });
   };
 
-  // Fetch user's orders with order items and try to get product details
-  const { data: orders, isLoading, error } = useQuery<Order[], Error>({
+  // Fetch user's orders
+  const { data: userOrders, isLoading, error } = useQuery<Order[], Error>({
     queryKey: ['orders', user?.id],
     queryFn: async (): Promise<Order[]> => {
       if (!user) return [];
-
       try {
-        // First try to fetch orders with product details
         const { data, error } = await supabase
           .from('orders')
           .select(`
@@ -149,9 +157,6 @@ const Orders: React.FC = () => {
           .order('created_at', { ascending: false });
 
         if (error) {
-          console.error('Error with product relationship:', error);
-
-          // Fallback: fetch orders without product details
           const { data: fallbackData, error: fallbackError } = await supabase
             .from('orders')
             .select(`
@@ -180,11 +185,9 @@ const Orders: React.FC = () => {
             .order('created_at', { ascending: false });
 
           if (fallbackError) throw fallbackError;
-          return (fallbackData || []) as unknown as Order[];      // Remove "unknown" when order_number is fixed, since its sending null
+          return (fallbackData || []) as unknown as Order[];
         }
-        console.log(data);
-
-        return (data || []) as unknown as Order[];      // Remove "unknown" when order_number is fixed, since its sending null
+        return (data || []) as unknown as Order[];
       } catch (err) {
         console.error('Query error:', err);
         throw err;
@@ -193,6 +196,32 @@ const Orders: React.FC = () => {
     enabled: !!user
   });
 
+  const submitOrderReview = async () => {
+    if (!user || !reviewOrderId) return;
+    try {
+      const selectedOrder = userOrders?.find(o => o.id === reviewOrderId);
+      const targetProductId = selectedOrder?.order_items[0]?.product_id || '';
+
+      const { error } = await supabase
+        .from('reviews')
+        .insert({
+          user_id: user.id,
+          product_id: targetProductId,
+          rating: rating,
+          comment: comment,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+      alert("Order review submitted successfully!");
+      setReviewOrderId(null);
+      setComment('');
+    } catch (err) {
+      console.error(err);
+      alert("Failed to submit review.");
+    }
+  };
+
   // Fetch product details separately if needed
   const { data: products } = useQuery({
     queryKey: ['products'],
@@ -200,23 +229,17 @@ const Orders: React.FC = () => {
       const { data, error } = await supabase
         .from('products')
         .select('id, title, image');
-
-      if (error) {
-        console.error('Error fetching products:', error);
-        return [];
-      }
+      if (error) return [];
       return data || [];
     },
-    enabled: !!orders && orders.length > 0
+    enabled: !!userOrders && userOrders.length > 0
   });
 
-  // Create a product lookup map
   const productMap = React.useMemo(() => {
     if (!products) return {};
     return products.reduce((acc, product) => {
       acc[product.id] = product;
       return acc;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }, {} as Record<string, any>);
   }, [products]);
 
@@ -237,21 +260,7 @@ const Orders: React.FC = () => {
         <div className="text-center">
           <XCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <p className="text-red-600 mb-4">Unable to load orders</p>
-          <p className="text-gray-600 text-sm">{error.message}</p>
         </div>
-      </div>
-    );
-  }
-
-  if (!orders || orders.length === 0) {
-    return (
-      <div className="pt-28 pb-20 section-container flex flex-col items-center">
-        <Package className="h-16 w-16 text-gray-400 mb-4" />
-        <h2 className="text-xl font-semibold mb-2">No Orders Yet</h2>
-        <p className="text-gray-600 mb-6">You haven't placed any orders yet. Start shopping to see your orders here.</p>
-        <Button onClick={() => navigate('/')} className="bg-blue-600 hover:bg-blue-700">
-          Start Shopping
-        </Button>
       </div>
     );
   }
@@ -271,15 +280,14 @@ const Orders: React.FC = () => {
         </div>
 
         <div className="space-y-4">
-          {orders.map((order) => {
+          {userOrders?.map((order) => {
             const orderDate = new Date(order?.created_at);
-            const totalItems = order?.order_items.reduce(
-              (sum, item) => sum + item.quantity,
-              0
-            );
+            const totalItems = order?.order_items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
             const statusConfig = STATUS_CONFIG[order?.status] || STATUS_CONFIG.pending;
             const StatusIcon = statusConfig.icon;
             const isExpanded = expandedOrders.has(order?.id);
+            
+            const isOrderComplete = order.status === 'delivered' || order.status === 'done';
 
             return (
               <Card key={order?.id} className="w-full shadow-sm border-gray-500 hover:shadow-md transition-shadow hover:border-gray-900 hover:bg-gray-300">
@@ -292,8 +300,6 @@ const Orders: React.FC = () => {
                             <CardTitle className="text-lg font-semibold">
                               Order #{order?.order_number || order?.id.slice(0, 8).toUpperCase()}
                             </CardTitle>
-
-                            {/* Only show on small screens (left aligned) */}
                             <div className="sm:hidden mt-1">
                               <Badge className={`${statusConfig.color} border font-medium w-fit`}>
                                 <StatusIcon className="h-3 w-3 mr-1" />
@@ -301,8 +307,6 @@ const Orders: React.FC = () => {
                               </Badge>
                             </div>
                           </div>
-
-                          {/* Only show on medium and above (inline right) */}
                           <div className="hidden sm:block">
                             <Badge className={`${statusConfig.color} border font-medium w-fit`}>
                               <StatusIcon className="h-3 w-3 mr-1" />
@@ -310,15 +314,10 @@ const Orders: React.FC = () => {
                             </Badge>
                           </div>
                         </div>
-
                       </div>
 
                       <div className="flex flex-wrap gap-4 text-sm text-gray-600">
-                        <span>Placed on {orderDate.toLocaleDateString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric'
-                        })}</span>
+                        <span>Placed on {orderDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                         <span>•</span>
                         <span>{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
                         <span>•</span>
@@ -327,172 +326,97 @@ const Orders: React.FC = () => {
                     </div>
 
                     <div className="flex flex-col items-end gap-2 ml-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
-                        disabled={!order.delivery_otp}
-                        className={`min-w-[110px] rounded-md text-xs sm:text-sm transition-all ${order.delivery_otp ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100' : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'}`}
-                      >
-                        {order.delivery_otp ? 'View OTP' : 'OTP pending'}
-                      </Button>
+                      {!isOrderComplete && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
+                          disabled={!order.delivery_otp}
+                          className={`min-w-[110px] rounded-md text-xs sm:text-sm transition-all ${order.delivery_otp ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100' : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'}`}
+                        >
+                          {order.delivery_otp ? 'View OTP' : 'OTP pending'}
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => toggleOrderExpansion(order?.id)}
                         className="flex items-center gap-1 text-gray-600 hover:text-gray-900 text-xs sm:text-sm"
                       >
-                        {isExpanded ? (
-                          <>
-                            <ChevronUp className="h-4 w-4" />
-                            Less Details
-                          </>
-                        ) : (
-                          <>
-                            <ChevronDown className="h-4 w-4" />
-                            More Details
-                          </>
-                        )}
+                        {isExpanded ? (<><ChevronUp className="h-4 w-4" />Less Details</>) : (<><ChevronDown className="h-4 w-4" />More Details</>)}
                       </Button>
                     </div>
                   </div>
                 </CardHeader>
 
-                {/* Order Items Preview (Always Visible) */}
                 <CardContent className="pt-0">
                   <div className="w-full border rounded-lg bg-white shadow-sm px-4 py-3 sm:px-6 sm:py-4">
-
-                    {/* Table header: hide on mobile, show on sm+ */}
                     <div className="hidden sm:block bg-gray-50 px-4 py-3 border-b rounded-t-lg">
                       <div className="grid grid-cols-4 gap-4 text-sm font-semibold text-gray-700">
                         <span>Product</span>
-                        <span className="text-left">Qty</span>
-                        <span className="text-left">Each Price</span>
-                        <span className="text-lef">Total</span>
+                        <span>Qty</span>
+                        <span>Each Price</span>
+                        <span className="text-right">Total</span>
                       </div>
                     </div>
-                    <div className="space-y-2 sm:space-y-0">
-                      {order?.order_items.map((item) => {
+                    
+                    <div className="space-y-4 sm:space-y-0 sm:divide-y sm:divide-gray-100">
+                      {order?.order_items?.map((item) => {
                         const productInfo = item.products || productMap[item.product_id];
                         return (
-                          <div
-                            key={item.id}
-                            className="flex flex-col sm:grid sm:grid-cols-4 gap-2 sm:gap-4 p-2 sm:p-4 border-b last:border-b-0 bg-gray-50 sm:bg-transparent rounded-lg sm:rounded-none"
-                          >
-                            {/* Product info */}
-                            <div className="flex items-center space-x-2 sm:space-x-3">
-                              {productInfo?.image && (
-                                <img
-                                  src={productInfo.image}
-                                  alt={productInfo.title}
-                                  className="w-12 h-12 object-cover rounded-md border"
-                                />
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="font-medium text-gray-900 truncate text-sm sm:text-base">
-                                  {productInfo?.title || `Product ${item.product_id.slice(0, 8)}`}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                  ID: {item.product_id.slice(0, 8)}...
-                                </p>
+                          <div key={item.id} className="pt-3 sm:py-4 flex flex-col w-full bg-gray-50 sm:bg-transparent rounded-xl p-3 sm:p-0">
+                            <div className="flex flex-col sm:grid sm:grid-cols-4 gap-2 sm:gap-4 items-start sm:items-center w-full">
+                              <div className="flex items-center space-x-3">
+                                {productInfo?.image && (
+                                  <img src={productInfo.image} alt={productInfo.title} className="w-12 h-12 object-cover rounded-md border" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productInfo?.title || `Product ${item.product_id.slice(0, 8)}`}</p>
+                                  <p className="text-xs text-gray-500">ID: {item.product_id.slice(0, 8)}...</p>
+                                </div>
                               </div>
-                            </div>
-                            {/* On mobile, show all details stacked */}
-                            <div className="flex sm:hidden flex-col gap-1 mt-1 text-xs text-gray-700 pl-14">
-                              <span>
-                                <span className="font-semibold">Qty:</span> {item.quantity}
-                              </span>
-                              <span>
-                                <span className="font-semibold">Each:</span> ₹{item.price.toFixed(2)}
-                              </span>
-                              <span>
-                                <span className="font-semibold">Total:</span> ₹{(item.quantity * item.price).toFixed(2)}
-                              </span>
-                            </div>
-                            {/* On desktop, show columns */}
-                            <div className="hidden sm:flex text-center self-center font-medium">
-                              {item.quantity}
-                            </div>
-                            <div className="hidden sm:flex text-center self-center font-medium">
-                              ₹{item.price.toFixed(2)}
-                            </div>
-                            <div className="hidden sm:flex text-right self-center font-semibold text-base">
-                              ₹{(item.quantity * item.price).toFixed(2)}
+                              <div className="hidden sm:flex font-medium">{item.quantity}</div>
+                              <div className="hidden sm:flex font-medium">₹{item.price.toFixed(2)}</div>
+                              <div className="hidden sm:flex justify-end font-semibold text-base text-right">₹{(item.quantity * item.price).toFixed(2)}</div>
                             </div>
                           </div>
                         );
                       })}
                     </div>
+                    
+                    {isOrderComplete && (
+                      <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-end w-full">
+                        <Button 
+                          size="sm" 
+                          onClick={() => setReviewOrderId(order.id)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all border border-amber-600/20"
+                        >
+                          <Star className="w-3.5 h-3.5 fill-current text-amber-100" /> Rate Order & Delivery Experience
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Expanded Details */}
                   {isExpanded && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="mt-6 pt-6 border-t border-gray-200"
-                    >
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-6 pt-6 border-t border-gray-200">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Customer Information */}
                         <div className="bg-gray-50 p-4 rounded-lg">
-                          <h3 className="font-semibold mb-3 flex items-center gap-2">
-                            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                            Customer Information
-                          </h3>
+                          <h3 className="font-semibold mb-3 flex items-center gap-2"><div className="w-2 h-2 bg-blue-500 rounded-full"></div>Customer Info</h3>
                           <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Name:</span>
-                              <span className="font-medium">{order?.name || 'Not provided'}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Email:</span>
-                              <span className="font-medium">{order?.email || 'Not provided'}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Phone:</span>
-                              <span className="font-medium">{order.phone || 'Not provided'}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Payment:</span>
-                              <span className="font-medium">
-                                {PAYMENT_METHODS[order.payment_method] || order.payment_method || 'Not specified'}
-                              </span>
-                            </div>
+                            <div className="flex justify-between"><span className="text-gray-600">Name:</span><span className="font-medium">{order?.name || 'Not provided'}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-600">Email:</span><span className="font-medium">{order?.email || 'Not provided'}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-600">Phone:</span><span className="font-medium">{order.phone || 'Not provided'}</span></div>
                           </div>
                         </div>
-
-                        {/* Delivery Information */}
                         <div className="bg-gray-50 p-4 rounded-lg">
-                          <h3 className="font-semibold mb-3 flex items-center gap-2">
-                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                            Delivery Address
-                          </h3>
+                          <h3 className="font-semibold mb-3 flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full"></div>Delivery Address</h3>
                           <div className="text-sm">
-                            {order.address || order.city || order.state ? (
-                              <div className="space-y-1">
-                                {order.address && (
-                                  <p className="font-medium">{order.address}</p>
-                                )}
-                                {(order.city || order.state || order.zip_code) && (
-                                  <p className="text-gray-600">
-                                    {[order.city, order.state, order.zip_code]
-                                      .filter(Boolean)
-                                      .join(', ')}
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <p className="text-gray-500 italic">No delivery address provided</p>
-                            )}
+                            {order.address ? <p className="font-medium">{order.address}, {order.city}, {order.state}</p> : <p className="text-gray-500 italic">No address provided</p>}
                           </div>
                         </div>
                       </div>
                     </motion.div>
                   )}
-
-
                 </CardContent>
               </Card>
             );
@@ -502,18 +426,45 @@ const Orders: React.FC = () => {
 
       {/* OTP Modal */}
       <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
-        <DialogContent className="sm:max-w-lg w-full rounded-3xl bg-white p-6 shadow-2xl">
-          <DialogHeader>
-            <DialogTitle>Delivery OTP</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
+          <DialogHeader><DialogTitle>Delivery OTP</DialogTitle></DialogHeader>
           <div className="text-center space-y-4 py-2">
-            <p className="text-base text-gray-600">Your delivery OTP is ready.</p>
-            <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-blue-50 px-6 py-4 text-4xl font-semibold tracking-widest text-blue-700 shadow-sm">
-              {selectedOtp}
+            <p className="text-sm text-gray-600">Share this code with the delivery partner:</p>
+            <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-blue-50 px-6 py-4 text-4xl font-semibold tracking-widest text-blue-700 shadow-sm">{selectedOtp}</div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Review Dialog Form */}
+      <Dialog open={!!reviewOrderId} onOpenChange={(open) => !open && setReviewOrderId(null)}>
+        <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
+          <DialogHeader><DialogTitle className="text-lg font-bold">Rate Order Experience</DialogTitle></DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Rating</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Star 
+                    key={star} 
+                    onClick={() => setRating(star)} 
+                    className={`w-7 h-7 cursor-pointer transition-colors ${star <= rating ? 'text-amber-400 fill-amber-400' : 'text-gray-300'}`} 
+                  />
+                ))}
+              </div>
             </div>
-            <p className="text-sm text-gray-600">
-              Share this code with the delivery person to complete your order.
-            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Feedback Comments</label>
+              <textarea 
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="How was the overall delivery timeline and service quality?"
+                className="w-full border p-2.5 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setReviewOrderId(null)}>Cancel</Button>
+              <Button onClick={submitOrderReview} className="bg-amber-500 hover:bg-amber-600 text-white">Submit Feedback</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
