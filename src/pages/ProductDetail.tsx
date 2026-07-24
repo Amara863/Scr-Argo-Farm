@@ -382,8 +382,8 @@ const ProductDetail = () => {
     });
   };
 
-  const handleImageUpload = (e) => {
-    const files = Array.from(e.target.files);
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
     const maxImages = 3;
     const maxSize = 5 * 1024 * 1024; // 5MB per image
     
