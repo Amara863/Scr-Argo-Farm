@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { Product } from '@/types/products';
+import { Tables } from '@/integrations/supabase/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { AlertTriangle, Package, Pencil, Plus, SaveIcon, Trash2, X, Minus, Search, History } from 'lucide-react';
@@ -15,7 +15,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StockManager } from './stockmanagement';
 
-interface ProductWithStock extends Product {
+interface ProductVariant {
+  unit: string;
+  price: string;
+}
+
+interface ProductWithStock extends Tables<'products'> {
   stock_quantity: number;
   min_stock_level: number;
   max_stock_level: number;
@@ -40,13 +45,33 @@ const ProductsTab: React.FC = () => {
   const queryClient = useQueryClient();
   const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
+
+  const getVariantsFromProduct = (product: Partial<ProductWithStock>) => {
+    const incomingVariants = product.variants?.length ? product.variants : [{ unit: product.unit || '', price: product.price || '' }];
+    return incomingVariants.map(variant => ({
+      unit: variant.unit?.trim() || '',
+      price: variant.price?.toString().trim() || ''
+    })).filter(variant => variant.unit || variant.price);
+  };
+
+  const buildLegacyProductPayload = (product: Partial<ProductWithStock>) => {
+    const normalizedVariants = getVariantsFromProduct(product);
+    const primaryVariant = normalizedVariants[0] || { unit: product.unit || '', price: product.price || '' };
+
+    return {
+      ...product,
+      price: primaryVariant.price || '0',
+      unit: primaryVariant.unit || 'unit',
+    };
+  };
   const [stockUpdateProduct, setStockUpdateProduct] = useState<ProductWithStock | null>(null);
   const [stockUpdateQuantity, setStockUpdateQuantity] = useState<number>(0);
   const [viewingHistory, setViewingHistory] = useState<string | null>(null);
   const [stockHistory, setStockHistory] = useState<StockMovement[]>([]);
   const [newProduct, setNewProduct] = useState<Partial<ProductWithStock>>({
-    title: '', image: '', price: '', unit: '', description: '', full_description: '', 
-    ingredients: '', usage_instructions: '', stock_quantity: 0, min_stock_level: 10, max_stock_level: 100
+    title: '', image: '', description: '', full_description: '', 
+    ingredients: '', usage_instructions: '', variants: [{ unit: '', price: '' }],
+    stock_quantity: 0, min_stock_level: 10, max_stock_level: 100
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMobileTab, setActiveMobileTab] = useState<'overview' | 'manage'>('manage');
@@ -112,11 +137,18 @@ const ProductsTab: React.FC = () => {
   const filteredProducts = useMemo(() => {
     if (!searchTerm) return products;
     
-    return products.filter(product => 
-      product.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.unit.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (product.description && product.description.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    return products.filter(product => {
+      const normalizedSearch = searchTerm.toLowerCase();
+      const normalizedVariants = getVariantsFromProduct(product);
+      const variantSearch = normalizedVariants.some(variant =>
+        variant.unit.toLowerCase().includes(normalizedSearch) ||
+        variant.price.toLowerCase().includes(normalizedSearch)
+      );
+
+      return product.title.toLowerCase().includes(normalizedSearch) ||
+        variantSearch ||
+        (product.description && product.description.toLowerCase().includes(normalizedSearch));
+    });
   }, [products, searchTerm]);
 
   // Get low stock products based on live stock
@@ -127,10 +159,12 @@ const ProductsTab: React.FC = () => {
   // Create product mutation
   const createProduct = useMutation({
     mutationFn: async (product: Partial<ProductWithStock>) => {
+      const persistedProduct = buildLegacyProductPayload(product);
+
       const { data, error } = await supabase
         .from('products')
         .insert([{
-          ...product,
+          ...persistedProduct,
           stock_quantity: product.stock_quantity || 0,
           min_stock_level: product.min_stock_level || 10,
           max_stock_level: product.max_stock_level || 100
@@ -177,8 +211,9 @@ const ProductsTab: React.FC = () => {
   // Update product mutation
   const updateProduct = useMutation({
     mutationFn: async (product: ProductWithStock) => {
+      const persistedProduct = buildLegacyProductPayload(product);
       const updateFields = {
-        title: product.title, image: product.image, price: product.price, unit: product.unit,
+        title: product.title, image: product.image, price: persistedProduct.price, unit: persistedProduct.unit,
         description: product.description, full_description: product.full_description, 
         ingredients: product.ingredients, usage_instructions: product.usage_instructions, 
         min_stock_level: product.min_stock_level, 
@@ -293,7 +328,7 @@ const ProductsTab: React.FC = () => {
         .limit(20);
 
       if (error) throw error;
-      setStockHistory(data || []);
+        setStockHistory(data || []);
     } catch (error) {
       console.error('Error fetching stock history:', error);
       toast({
@@ -373,12 +408,63 @@ const ProductsTab: React.FC = () => {
     }
   };
 
+  const handleVariantChange = (
+    variantIndex: number,
+    field: 'unit' | 'price',
+    value: string,
+    source: 'edit' | 'new'
+  ) => {
+    const targetState = source === 'edit' ? editingProduct : newProduct;
+    if (!targetState) return;
+
+    const updatedVariants = [...(targetState.variants || [{ unit: '', price: '' }])];
+    updatedVariants[variantIndex] = {
+      ...updatedVariants[variantIndex],
+      [field]: value
+    };
+
+    if (source === 'edit') {
+      setEditingProduct(prev => prev ? { ...prev, variants: updatedVariants } : prev);
+    } else {
+      setNewProduct(prev => ({ ...prev, variants: updatedVariants }));
+    }
+  };
+
+  const addVariant = (source: 'edit' | 'new') => {
+    if (source === 'edit') {
+      setEditingProduct(prev => prev ? {
+        ...prev,
+        variants: [...(prev.variants || []), { unit: '', price: '' }]
+      } : prev);
+    } else {
+      setNewProduct(prev => ({
+        ...prev,
+        variants: [...(prev.variants || []), { unit: '', price: '' }]
+      }));
+    }
+  };
+
+  const removeVariant = (variantIndex: number, source: 'edit' | 'new') => {
+    if (source === 'edit') {
+      setEditingProduct(prev => prev ? {
+        ...prev,
+        variants: (prev.variants || []).filter((_, index) => index !== variantIndex)
+      } : prev);
+    } else {
+      setNewProduct(prev => ({
+        ...prev,
+        variants: (prev.variants || []).filter((_, index) => index !== variantIndex)
+      }));
+    }
+  };
+
   const handleEdit = (product: ProductWithStock) => {
     const productCopy = {
       ...product,
       full_description: product.full_description || '',
       ingredients: product.ingredients || '',
       usage_instructions: product.usage_instructions || '',
+      variants: product.variants?.length ? product.variants : [{ unit: product.unit || '', price: product.price || '' }],
       stock_quantity: product.actual_stock || 0, // Use live stock for editing
       min_stock_level: product.min_stock_level || 10,
       max_stock_level: product.max_stock_level || 100
@@ -407,16 +493,22 @@ const ProductsTab: React.FC = () => {
   const handleSaveEdit = () => {
     if (!editingProduct) return;
 
-    if (!editingProduct.title || !editingProduct.price || !editingProduct.unit) {
+    const normalizedVariants = getVariantsFromProduct(editingProduct);
+    const hasValidVariants = normalizedVariants.length > 0 && normalizedVariants.every(variant => variant.unit && variant.price);
+
+    if (!editingProduct.title || !hasValidVariants) {
       toast({
         title: "Validation Error",
-        description: "Title, price, and unit are required fields.",
+        description: "Title and at least one complete quantity variant are required.",
         variant: "destructive"
       });
       return;
     }
 
-    updateProduct.mutate(editingProduct, {
+    updateProduct.mutate({
+      ...editingProduct,
+      variants: normalizedVariants
+    }, {
       onSuccess: () => {
         setEditingProduct(null);
       }
@@ -438,16 +530,19 @@ const ProductsTab: React.FC = () => {
   const handleCancelNew = () => {
     setIsAddingNew(false);
     setNewProduct({
-      title: '', image: '', price: '', unit: '', description: '', full_description: '',
-      ingredients: '', usage_instructions: '', stock_quantity: 0, min_stock_level: 10, max_stock_level: 100
+      title: '', image: '', description: '', full_description: '',
+      ingredients: '', usage_instructions: '', variants: [{ unit: '', price: '' }], stock_quantity: 0, min_stock_level: 10, max_stock_level: 100
     });
   };
 
   const handleSaveNew = () => {
-    if (!newProduct.title || !newProduct.price || !newProduct.unit) {
+    const normalizedVariants = getVariantsFromProduct(newProduct);
+    const hasValidVariants = normalizedVariants.length > 0 && normalizedVariants.every(variant => variant.unit && variant.price);
+
+    if (!newProduct.title || !hasValidVariants) {
       toast({
         title: "Missing information",
-        description: "Please fill in at least the title, price, and unit fields.",
+        description: "Please fill in at least the title and one complete quantity variant.",
         variant: "destructive"
       });
       return;
@@ -457,8 +552,7 @@ const ProductsTab: React.FC = () => {
       ...newProduct,
       title: newProduct.title ?? '',
       image: newProduct.image ?? 'https://images.unsplash.com/photo-1550583724-b2692b85b150?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=800&q=80',
-      price: newProduct.price ?? '0',
-      unit: newProduct.unit ?? 'unit',
+      variants: normalizedVariants,
       description: newProduct.description ?? '',
       stock_quantity: newProduct.stock_quantity ?? 0,
       min_stock_level: newProduct.min_stock_level ?? 10,
@@ -469,8 +563,9 @@ const ProductsTab: React.FC = () => {
       onSuccess: () => {
         setIsAddingNew(false);
         setNewProduct({ 
-          title: '', image: '', price: '', unit: '', description: '', full_description: '', 
-          ingredients: '', usage_instructions: '', stock_quantity: 0, min_stock_level: 10, max_stock_level: 100 
+          title: '', image: '', description: '', full_description: '', 
+          ingredients: '', usage_instructions: '', variants: [{ unit: '', price: '' }],
+          stock_quantity: 0, min_stock_level: 10, max_stock_level: 100 
         });
       }
     });
@@ -646,8 +741,12 @@ const ProductsTab: React.FC = () => {
                     />
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-gray-900 text-xs md:text-sm block truncate">{product.title}</span>
-                      <div className="flex items-center gap-1 md:gap-2 mt-0.5 md:mt-1">
-                        <span className="text-xs text-gray-600"> {product.unit}</span>
+                      <div className="flex flex-col gap-0.5 mt-0.5 md:mt-1">
+                        {(getVariantsFromProduct(product)).map((variant, index) => (
+                          <span key={`${product.id}-alert-variant-${index}`} className="text-xs text-gray-600">
+                            {variant.unit || 'unit'} · ₹{variant.price || '0'}
+                          </span>
+                        ))}
                         <span className={`px-1.5 md:px-2 py-0.5 md:py-1 rounded-full text-xs font-medium ${getStockStatusColor(product.stock_status)}`}>
                          Live Stock: {product.actual_stock}
                         </span>
@@ -711,27 +810,47 @@ const ProductsTab: React.FC = () => {
                   className="focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              <div>
-                <label htmlFor="new-price" className="block text-sm font-medium mb-1 text-black">Price (₹) *</label>
-                <Input
-                  id="new-price"
-                  name="price"
-                  value={newProduct.price ?? ''}
-                  onChange={handleNewProductChange}
-                  placeholder="100"
-                  className="focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label htmlFor="new-unit" className="block text-sm font-medium mb-1 text-gray-700">Unit *</label>
-                <Input
-                  id="new-unit"
-                  name="unit"
-                  value={newProduct.unit ?? ''}
-                  onChange={handleNewProductChange}
-                  placeholder="1 L, 500g, etc."
-                  className="focus:ring-2 focus:ring-blue-500"
-                />
+              <div className="md:col-span-2">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">Variants *</label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addVariant('new')}
+                    className="border-gray-900 text-gray-900"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Variant
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {(newProduct.variants || [{ unit: '', price: '' }]).map((variant, index) => (
+                    <div key={`new-variant-${index}`} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                      <Input
+                        value={variant.unit ?? ''}
+                        onChange={(e) => handleVariantChange(index, 'unit', e.target.value, 'new')}
+                        placeholder="Unit (e.g. 1 L)"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                      <Input
+                        value={variant.price ?? ''}
+                        onChange={(e) => handleVariantChange(index, 'price', e.target.value, 'new')}
+                        placeholder="Price (₹)"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeVariant(index, 'new')}
+                        className="border-red-500 text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1011,24 +1130,48 @@ const ProductsTab: React.FC = () => {
                         />
                       </div>
                       <div className="mb-2">
-                        <label className="block text-xs font-medium mb-1 text-gray-700">Price (₹) *</label>
-                        <Input
-                          name="price"
-                          value={editingProduct.price}
-                          onChange={handleEditChange}
-                          placeholder="100"
-                          className="focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="mb-2">
-                        <label className="block text-xs font-medium mb-1 text-gray-700">Unit *</label>
-                        <Input
-                          name="unit"
-                          value={editingProduct.unit}
-                          onChange={handleEditChange}
-                          placeholder="1 L, 500g, etc."
-                          className="focus:ring-2 focus:ring-blue-500"
-                        />
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-medium text-gray-700">Variants *</label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addVariant('edit')}
+                            className="border-gray-900 text-gray-900 h-8 px-2"
+                          >
+                            <Plus className="w-3 h-3 mr-1" />
+                            Add
+                          </Button>
+                        </div>
+                        <div className="space-y-2">
+                          {(editingProduct.variants || [{ unit: '', price: '' }]).map((variant, index) => (
+                            <div key={`edit-variant-${index}`} className="grid grid-cols-2 gap-2 items-center">
+                              <Input
+                                value={variant.unit ?? ''}
+                                onChange={(e) => handleVariantChange(index, 'unit', e.target.value, 'edit')}
+                                placeholder="Unit"
+                                className="focus:ring-2 focus:ring-blue-500"
+                              />
+                              <div className="flex gap-2">
+                                <Input
+                                  value={variant.price ?? ''}
+                                  onChange={(e) => handleVariantChange(index, 'price', e.target.value, 'edit')}
+                                  placeholder="Price"
+                                  className="focus:ring-2 focus:ring-blue-500"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeVariant(index, 'edit')}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                       
                       {/* Stock fields for mobile edit */}
@@ -1101,9 +1244,13 @@ const ProductsTab: React.FC = () => {
                         />
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate">{product.title}</h3>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-green-600">₹{product.price}</span>
-                            <span className="text-xs text-gray-500">per {product.unit}</span>
+                          <div className="space-y-1 mb-1">
+                            {(getVariantsFromProduct(product)).map((variant, index) => (
+                              <div key={`${product.id}-mobile-variant-${index}`} className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-green-600">₹{variant.price || '0'}</span>
+                                <span className="text-xs text-gray-500">per {variant.unit || 'unit'}</span>
+                              </div>
+                            ))}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStockStatusColor(product.stock_status)}`}>
@@ -1212,23 +1359,48 @@ const ProductsTab: React.FC = () => {
                       <TableCell>
                         {editingProduct?.id === product.id ? (
                           <div className="space-y-2">
-                            <Input
-                              name="price"
-                              value={editingProduct.price}
-                              onChange={handleEditChange}
-                              placeholder="Price"
-                            />
-                            <Input
-                              name="unit"
-                              value={editingProduct.unit}
-                              onChange={handleEditChange}
-                              placeholder="Unit"
-                            />
+                            {(editingProduct.variants || [{ unit: '', price: '' }]).map((variant, index) => (
+                              <div key={`desktop-edit-variant-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
+                                <Input
+                                  value={variant.unit ?? ''}
+                                  onChange={(e) => handleVariantChange(index, 'unit', e.target.value, 'edit')}
+                                  placeholder="Unit"
+                                />
+                                <Input
+                                  value={variant.price ?? ''}
+                                  onChange={(e) => handleVariantChange(index, 'price', e.target.value, 'edit')}
+                                  placeholder="Price"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeVariant(index, 'edit')}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ))}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => addVariant('edit')}
+                              className="border-gray-900 text-gray-900"
+                            >
+                              <Plus className="w-4 h-4 mr-1" />
+                              Add Variant
+                            </Button>
                           </div>
                         ) : (
-                          <div>
-                            <div className="font-medium text-green-600">₹{product.price}</div>
-                            <div className="text-sm text-gray-500">per {product.unit}</div>
+                          <div className="space-y-1">
+                            {(getVariantsFromProduct(product)).map((variant, index) => (
+                              <div key={`${product.id}-variant-${index}`} className="text-sm">
+                                <div className="font-medium text-green-600">₹{variant.price || '0'}</div>
+                                <div className="text-gray-500">per {variant.unit || 'unit'}</div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </TableCell>

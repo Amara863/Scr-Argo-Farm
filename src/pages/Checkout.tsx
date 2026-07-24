@@ -12,7 +12,7 @@ import {
   MapPinLine, Calendar, Clock, Sparkles
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 interface RazorpayResponse {
   razorpay_payment_id?: string;
@@ -66,6 +66,32 @@ interface DeliverySlot {
   dateLabel: string;
   emoji: string;
 }
+
+type CheckoutUserProfile = {
+  name?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+};
+
+type CheckoutCartItem = {
+  created_at: string;
+  id: string;
+  product_id: string;
+  quantity: number;
+  updated_at: string;
+  user_id: string;
+  selected_unit?: string | null;
+};
+
+type BuyNowCheckoutState = {
+  productId: string;
+  selectedUnit: string;
+  quantity: number;
+  price: number;
+};
 
 function getISTSnapshot(): { hour: number; dateLabel: string; tomorrowLabel: string } {
   const nowUTC = new Date();
@@ -159,11 +185,56 @@ async function reverseGeocode(lat: number, lng: number): Promise<{
   return { address, city, state, zipCode };
 }
 
+function resolveCheckoutItemPrice(product: any, selectedUnit?: string | null) {
+  const variants = Array.isArray((product as any)?.variants) ? (product as any).variants : [];
+
+  if (variants.length === 0) {
+    return {
+      resolvedPrice: Number(product?.price || 0),
+      resolvedUnit: product?.unit || 'unit',
+      isValid: true,
+      validationMessage: null,
+    };
+  }
+
+  if (!selectedUnit || String(selectedUnit).trim() === '') {
+    return {
+      resolvedPrice: 0,
+      resolvedUnit: product?.unit || 'unit',
+      isValid: false,
+      validationMessage: 'Please review your cart. One item has a missing selected pack size.',
+    };
+  }
+
+  const matchedVariant = variants.find((variant: any) =>
+    String(variant?.unit || '').trim().toLowerCase() === String(selectedUnit).trim().toLowerCase()
+  );
+
+  if (!matchedVariant) {
+    return {
+      resolvedPrice: 0,
+      resolvedUnit: String(selectedUnit || '').trim() || product?.unit || 'unit',
+      isValid: false,
+      validationMessage: 'Please review your cart. One selected pack size is no longer available.',
+    };
+  }
+
+  return {
+    resolvedPrice: Number(matchedVariant.price || 0),
+    resolvedUnit: String(matchedVariant.unit || selectedUnit || '').trim() || product?.unit || 'unit',
+    isValid: true,
+    validationMessage: null,
+  };
+}
+
 const Checkout = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
+  const buyNowState = location.state as BuyNowCheckoutState | null;
+  const isBuyNow = Boolean(buyNowState?.productId);
 
   const [formData, setFormData] = useState({
     name: '', phone: '', address: '', city: '', state: '', zipCode: ''
@@ -197,13 +268,13 @@ const Checkout = () => {
     }
   }, [istHour]);
 
-  const { data: userProfile } = useQuery({
+  const { data: userProfile } = useQuery<CheckoutUserProfile | null>({
     queryKey: ['user-profile', user?.id],
     queryFn: async () => {
       if (!user) return null;
       const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       if (error) { console.log('Profile fetch error:', error); return null; }
-      return data;
+      return (data as CheckoutUserProfile | null) ?? null;
     },
     enabled: !!user,
   });
@@ -230,25 +301,72 @@ const Checkout = () => {
     },
   });
 
-  const { data: cartItems, isLoading } = useQuery({
+  const { data: cartItems, isLoading } = useQuery<CheckoutCartItem[]>({
     queryKey: ['cart', user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase.from('cart_items').select('*').eq('user_id', user.id);
       if (error) throw error;
-      return data || [];
+      return (data as CheckoutCartItem[]) || [];
     },
     enabled: !!user,
   });
 
-  const cartWithProducts = cartItems?.map(item => {
+  const checkoutItems: CheckoutCartItem[] = isBuyNow && buyNowState
+    ? [{
+        id: `buy-now-${buyNowState.productId}`,
+        user_id: user?.id || '',
+        product_id: buyNowState.productId,
+        selected_unit: buyNowState.selectedUnit,
+        quantity: buyNowState.quantity,
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      }]
+    : (cartItems || []);
+
+  const cartWithProducts = checkoutItems.map((item: CheckoutCartItem) => {
     const product = products?.find(p => p.id.toString() === item.product_id.toString());
-    return { ...item, product, resolved_product_id: product?.id || item.product_id };
+    const pricing = resolveCheckoutItemPrice(product, item.selected_unit);
+
+    return {
+      ...item,
+      product,
+      resolved_product_id: product?.id || item.product_id,
+      resolvedPrice: pricing.resolvedPrice,
+      resolvedUnit: pricing.resolvedUnit,
+      isValid: pricing.isValid,
+      validationMessage: pricing.validationMessage,
+    };
   }) || [];
 
   const total = cartWithProducts.reduce(
-    (sum, item) => sum + (Number(item.product?.price || 0) * item.quantity), 0
+    (sum, item) => sum + (Number(item.resolvedPrice || 0) * item.quantity), 0
   );
+
+  const getCheckoutValidationError = () => {
+    const invalidVariantItem = cartWithProducts.find(item => !item.isValid);
+    if (invalidVariantItem) {
+      return invalidVariantItem.validationMessage || 'Please review your cart. One selected pack size is no longer available.';
+    }
+
+    if (!formData.name || !formData.phone || !formData.address || !formData.city || !formData.state || !formData.zipCode) {
+      return 'Please fill all required address inputs.';
+    }
+
+    if (!selectedSlot) {
+      return 'Please select a delivery slot';
+    }
+
+    if (cartWithProducts.some(item => !item.product)) {
+      return 'Items no longer available';
+    }
+
+    if (cartWithProducts.some(item => !Number.isFinite(item.resolvedPrice) || item.resolvedPrice < 0)) {
+      return 'Unable to resolve the current price for one or more items.';
+    }
+
+    return null;
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -302,7 +420,7 @@ const Checkout = () => {
   const updateProfile = useMutation({
     mutationFn: async (profileData: any) => {
       if (!user) return;
-      const { error } = await supabase.from('profiles').upsert({
+      const { error } = await (supabase.from('profiles') as any).upsert({
         id: user.id,
         name:       profileData.name,
         phone:      profileData.phone,
@@ -322,8 +440,8 @@ const Checkout = () => {
     mutationFn: async (paymentId?: string) => {
       if (!user) throw new Error('User not authenticated');
       if (cartWithProducts.length === 0) throw new Error('Cart is empty');
-      if (cartWithProducts.filter(i => !i.product).length > 0) throw new Error('Items no longer available');
-      if (!selectedSlot) throw new Error('Please select a delivery slot');
+      const validationError = getCheckoutValidationError();
+      if (validationError) throw new Error(validationError);
 
       try { await updateProfile.mutateAsync(formData); }
       catch (e) { console.log('Profile update failed:', e); }
@@ -355,22 +473,26 @@ const Checkout = () => {
         orderData.delivery_lng = coords.lng;
       }
 
-      const { data: order, error: orderError } = await supabase.from('orders').insert([orderData]).select().single();
+      const { data: order, error: orderError } = await (supabase.from('orders') as any).insert([orderData]).select().single();
       if (orderError) throw new Error(`Failed to create order: ${orderError.message}`);
       if (!order) throw new Error('No order returned');
 
       const orderItems = cartWithProducts.filter(item => item.product).map(item => ({
         order_id:   order.id,
         product_id: item.resolved_product_id,
+        product_name: item.product!.title,
+        selected_unit: item.resolvedUnit,
         quantity:   item.quantity,
-        price:      Number(item.product!.price || 0),
+        price:      Number(item.resolvedPrice || 0),
         created_at: new Date().toISOString()
       }));
 
-      const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
+      const { error: itemsError } = await (supabase.from('order_items') as any).insert(orderItems);
       if (itemsError) throw new Error(`Failed to create items: ${itemsError.message}`);
 
-      await supabase.from('cart_items').delete().eq('user_id', user.id);
+      if (!isBuyNow) {
+        await supabase.from('cart_items').delete().eq('user_id', user.id);
+      }
       return order.id;
     },
     onSuccess: () => {
@@ -421,6 +543,12 @@ const Checkout = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const validationError = getCheckoutValidationError();
+    if (validationError) {
+      toast({ title: 'Checkout validation failed', description: validationError, variant: 'destructive' });
+      return;
+    }
+
     if (paymentMethod === 'cod') {
       try { setIsSubmitting(true); await placeOrder.mutateAsync(undefined); }
       catch (e) { console.error(e); }
@@ -583,9 +711,9 @@ const Checkout = () => {
                   <div key={item.id} className="flex justify-between text-sm">
                     <div>
                       <span className="font-semibold block text-gray-800">{item.product?.title}</span>
-                      <span className="text-gray-500 text-xs">{item.quantity} units x ₹{item.product?.price}</span>
+                      <span className="text-gray-500 text-xs">{item.quantity} units x ₹{item.resolvedPrice.toFixed(2)} ({item.resolvedUnit})</span>
                     </div>
-                    <span className="font-medium text-gray-900">₹{(Number(item.product?.price || 0) * item.quantity).toFixed(2)}</span>
+                    <span className="font-medium text-gray-900">₹{(Number(item.resolvedPrice || 0) * item.quantity).toFixed(2)}</span>
                   </div>
                 ))}
               </div>

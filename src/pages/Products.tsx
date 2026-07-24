@@ -23,7 +23,7 @@ interface Product {
   min_stock_level: number;
   max_stock_level: number;
   actual_stock: number; // Live stock from stock_movements
-  stock_status: 'in_stock' | 'low_stock' | 'out_of_stock';
+  stock_status: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
   created_at?: string;
   updated_at?: string;
 }

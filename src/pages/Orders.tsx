@@ -57,11 +57,14 @@ const PAYMENT_METHODS = {
 interface OrderItem {
   id: string;
   product_id: string;
+  product_name?: string | null;
+  selected_unit?: string | null;
   quantity: number;
   price: number;
   products?: {
     title: string;
     image?: string;
+    unit?: string;
   };
 }
 
@@ -138,11 +141,14 @@ const Orders: React.FC = () => {
             order_items (
               id, 
               product_id, 
+              product_name,
+              selected_unit,
               quantity, 
               price,
               products (
                 title,
-                image
+                image,
+                unit
               )
             )
           `)
@@ -170,6 +176,8 @@ const Orders: React.FC = () => {
               order_items (
                 id, 
                 product_id, 
+                product_name,
+                selected_unit,
                 quantity, 
                 price
               )
@@ -221,7 +229,7 @@ const Orders: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, title, image');
+        .select('id, title, image, unit');
       if (error) return [];
       return data || [];
     },
@@ -236,6 +244,12 @@ const Orders: React.FC = () => {
     }, {} as Record<string, any>);
   }, [products]);
 
+  const getOrderItemProductName = (item: OrderItem, productInfo?: OrderItem['products']) =>
+    item.product_name || productInfo?.title || 'Product unavailable';
+
+  const getOrderItemPackSize = (item: OrderItem, productInfo?: OrderItem['products']) =>
+    item.selected_unit || productInfo?.unit || 'Pack size not recorded';
+
   // ─────────────────────────────────────────────────────────
   // BRAND THEMED INVOICE GENERATOR WITH DYNAMIC STATUS MATRIX
   // ─────────────────────────────────────────────────────────
@@ -248,7 +262,7 @@ const Orders: React.FC = () => {
       head: [['Product Description Title', 'Qty', 'Gross Amt', 'Discount', 'Taxable Val', 'Total']],
       body: order.order_items.map((item) => {
         const productInfo = item.products || productMap[item.product_id];
-        const title = productInfo?.title || `Farm Product (ID: ${item.product_id.slice(0,6)})`;
+        const title = `${getOrderItemProductName(item, productInfo)} (${getOrderItemPackSize(item, productInfo)})`;
         const qty = item.quantity;
         const unitPrice = item.price;
         const grossAmount = unitPrice * qty;
@@ -502,15 +516,18 @@ const Orders: React.FC = () => {
                     <div className="space-y-4 sm:space-y-0 sm:divide-y sm:divide-gray-100">
                       {order?.order_items?.map((item) => {
                         const productInfo = item.products || productMap[item.product_id];
+                        const productName = getOrderItemProductName(item, productInfo);
+                        const packSize = getOrderItemPackSize(item, productInfo);
                         return (
                           <div key={item.id} className="pt-3 sm:py-4 flex flex-col w-full bg-gray-50 sm:bg-transparent rounded-xl p-3 sm:p-0">
                             <div className="flex flex-col sm:grid sm:grid-cols-4 gap-2 sm:gap-4 items-start sm:items-center w-full">
                               <div className="flex items-center space-x-3">
                                 {productInfo?.image && (
-                                  <img src={productInfo.image} alt={productInfo.title} className="w-12 h-12 object-cover rounded-md border" />
+                                  <img src={productInfo.image} alt={productName} className="w-12 h-12 object-cover rounded-md border" />
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productInfo?.title || `Product ${item.product_id.slice(0, 8)}`}</p>
+                                  <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productName}</p>
+                                  <p className="text-xs text-gray-500">Pack size: {packSize}</p>
                                   <p className="text-xs text-gray-400">ID: {item.product_id.slice(0, 8)}...</p>
                                 </div>
                               </div>
