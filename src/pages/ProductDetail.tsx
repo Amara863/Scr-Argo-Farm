@@ -3,6 +3,7 @@
 
 
 import { Button } from '@/components/ui/button';
+import RecommendedProductsDrawer from '@/components/RecommendedProductsDrawer';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
@@ -21,6 +22,7 @@ const ProductDetail = () => {
   const [quantity, setQuantity] = useState(1);
   const [isAddedToCart, setIsAddedToCart] = useState(false);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
+  const [isRecommendationsDrawerOpen, setIsRecommendationsDrawerOpen] = useState(false);
 
   const [reviewComment, setReviewComment] = useState('');
   const [reviewRating, setReviewRating] = useState(0);
@@ -529,6 +531,14 @@ const ProductDetail = () => {
                 {isOutOfStock ? 'Out of Stock' : 'Buy Now'}
               </Button>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="mb-6 w-full"
+              onClick={() => setIsRecommendationsDrawerOpen(true)}
+            >
+              Explore Similar Products
+            </Button>
             
             <div className="glass-panel p-4 mb-6">
               <div className="flex items-start">
@@ -545,6 +555,11 @@ const ProductDetail = () => {
             </button>
           </div>
         </div>
+        <RecommendedProductsDrawer
+          open={isRecommendationsDrawerOpen}
+          onOpenChange={setIsRecommendationsDrawerOpen}
+          currentProduct={{ id: product.id, title: product.title }}
+        />
 
         {/* Product Description Tabs */}
         <div className="mt-20">
