@@ -260,8 +260,8 @@ const Checkout = () => {
       toast({ title: 'Not supported', description: 'Geometry GPS is not supported.', variant: 'destructive' });
       return;
     }
-    setLocationLoading(true);
-    setLocationStatus('idle');
+    locationLoading(true);
+    locationStatus('idle');
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -283,15 +283,15 @@ const Checkout = () => {
           setLocationStatus('success');
           toast({ title: '📍 Coordinates saved', description: 'Please fill address fields manually.', variant: 'destructive' });
         }
-        setLocationLoading(false);
+        locationLoading(false);
       },
       (err) => {
-        setLocationLoading(false);
+        locationLoading(false);
         if (err.code === err.PERMISSION_DENIED) {
           setLocationStatus('denied');
           toast({ title: 'Location permission denied', variant: 'destructive' });
         } else {
-          setLocationStatus('error');
+          locationStatus('error');
           toast({ title: 'Could not get location', variant: 'destructive' });
         }
       },
@@ -328,12 +328,10 @@ const Checkout = () => {
       try { await updateProfile.mutateAsync(formData); }
       catch (e) { console.log('Profile update failed:', e); }
 
-      // 🌟 FIXED LOGIC STAGE FOR ADMIN VISIBILITY OVERLAP
-      // Status hamesha 'pending' save hoga taaki Admin Panel ise fetch karke driver assign kar sake!
       const orderData: Record<string, any> = {
         user_id:           user.id,
         total:             Number(total.toFixed(2)),
-        status:            'pending', 
+        status:            'pending',
         payment_method:    paymentMethod === 'cod' ? 'cod' : 'online',
         name:              formData.name,
         phone:             formData.phone,
@@ -346,6 +344,7 @@ const Checkout = () => {
         payment_order_id:  null,
         payment_signature: null,
         delivery_slot:     selectedSlot,
+        driver_id:         null, 
         created_at:        new Date().toISOString(),
         updated_at:        new Date().toISOString(),
       };
@@ -370,14 +369,46 @@ const Checkout = () => {
       const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
       if (itemsError) throw new Error(`Failed to create items: ${itemsError.message}`);
 
+      // 🌟 SECURE INVENTORY DECREMENT 
+      for (const item of cartWithProducts) {
+        if (!item.product) continue;
+
+        const { data: productRow, error: fetchError } = await supabase
+          .from('products')
+          .select('stock_quantity')
+          .eq('id', item.resolved_product_id)
+          .maybeSingle();
+
+        if (fetchError) throw fetchError;
+
+        if (productRow) {
+          const currentStock = Number(productRow.stock_quantity || 0);
+          const orderedQuantity = Number(item.quantity || 0);
+          const finalStock = Math.max(0, currentStock - orderedQuantity);
+
+          const { error: updateStockError } = await supabase
+            .from('products')
+            .update({ stock_quantity: finalStock })
+            .eq('id', item.resolved_product_id);
+
+          if (updateStockError) throw updateStockError;
+        }
+      }
+
       await supabase.from('cart_items').delete().eq('user_id', user.id);
       return order.id;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cart'] });
+      // 🌟 FORCE FRESH STATE OVERRIDE BY FLUSHING CACHE
+      queryClient.resetQueries();
       queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast({ title: 'Order placed successfully! 🎉', description: paymentMethod === 'cod' ? 'Cash on Delivery acknowledged.' : 'Online checkout secure processed.' });
-      navigate('/orders');
+      queryClient.invalidateQueries({ queryKey: ['products-for-cart'] });
+      
+      toast({ title: 'Order placed successfully! 🎉', description: paymentMethod === 'cod' ? 'Cash on Delivery acknowledged.' : 'Online checkout processed.' });
+      
+      setTimeout(() => {
+        window.location.replace('/');
+      }, 400);
     },
     onError: (error) => {
       toast({ title: 'Error processing order', description: error instanceof Error ? error.message : 'Try again.', variant: 'destructive' });
@@ -447,8 +478,6 @@ const Checkout = () => {
   return (
     <motion.main initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }} className="pt-28 pb-20">
       <div className="section-container">
-        
-        {/* Progress Tracker Bar */}
         <div className="flex items-center justify-between mb-8 max-w-md mx-auto">
           <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${currentStep >= 1 ? 'bg-brand-red text-white' : 'bg-gray-200 text-gray-700'}`}>1</div>
           <div className={`flex-1 h-1 mx-2 ${currentStep >= 2 ? 'bg-brand-red' : 'bg-gray-200'}`} />
