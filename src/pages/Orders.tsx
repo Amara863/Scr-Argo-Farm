@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query'; 
 import { motion } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, Package, Truck, XCircle, Star, Download } from 'lucide-react';
 import React, { useState } from 'react';
@@ -12,7 +12,6 @@ import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// Define brand-consistent order status colors and icons (SCR Agro Farms Red Identity)
 const STATUS_CONFIG = {
   pending: {
     color: 'bg-red-50 text-brand-red border-red-100',
@@ -43,6 +42,11 @@ const STATUS_CONFIG = {
     color: 'bg-gray-100 text-gray-800 border-gray-200',
     icon: XCircle,
     label: 'Failed'
+  },
+  cancelled: { 
+    color: 'bg-gray-100 text-gray-500 border-gray-200 line-through',
+    icon: XCircle,
+    label: 'Cancelled'
   }
 };
 
@@ -57,14 +61,11 @@ const PAYMENT_METHODS = {
 interface OrderItem {
   id: string;
   product_id: string;
-  product_name?: string | null;
-  selected_unit?: string | null;
   quantity: number;
   price: number;
   products?: {
     title: string;
     image?: string;
-    unit?: string;
   };
 }
 
@@ -83,20 +84,22 @@ interface Order {
   zip_code: string;
   payment_method: string;
   delivery_otp: string | null;
+  driver_id: string | null;
   order_items: OrderItem[];
 }
 
 const Orders: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient(); 
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [selectedOtp, setSelectedOtp] = useState<string | null>(null);
   const [showOtpModal, setShowOtpModal] = useState(false);
   
-  // Review control states
   const [reviewOrderId, setReviewOrderId] = useState<string | null>(null);
   const [rating, setRating] = useState<number>(5);
   const [comment, setComment] = useState<string>('');
+  const [isCancelling, setIsCancelling] = useState<string | null>(null);
 
   const handleShowOtp = (otp: string) => {
     setSelectedOtp(otp);
@@ -115,7 +118,59 @@ const Orders: React.FC = () => {
     });
   };
 
-  // Fetch user's orders
+  const handleCancelOrder = async (orderId: string) => {
+    if (!window.confirm("Are you sure you want to cancel this order?")) return;
+    
+    setIsCancelling(orderId);
+    try {
+      const { data: orderItems, error: itemsError } = await supabase
+        .from('order_items')
+        .select('product_id, quantity')
+        .eq('order_id', orderId);
+
+      if (itemsError) throw itemsError;
+
+      const { error: updateOrderError } = await supabase
+        .from('orders')
+        .update({ status: 'cancelled' })
+        .eq('id', orderId);
+
+      if (updateOrderError) throw updateOrderError;
+
+      if (orderItems && orderItems.length > 0) {
+        for (const item of orderItems) {
+          const { data: product, error: productError } = await supabase
+            .from('products')
+            .select('stock_quantity')
+            .eq('id', item.product_id)
+            .single();
+
+          if (productError) throw productError;
+
+          const currentStock = product.stock_quantity || 0;
+          const restoredStock = currentStock + item.quantity;
+
+          const { error: stockUpdateError } = await supabase
+            .from('products')
+            .update({ stock_quantity: restoredStock })
+            .eq('id', item.product_id);
+
+          if (stockUpdateError) throw stockUpdateError;
+        }
+      }
+
+      alert("Order cancelled successfully and stock restored!");
+      queryClient.invalidateQueries({ queryKey: ['orders', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+
+    } catch (err: any) {
+      console.error('Cancellation pipeline failure:', err);
+      alert(`Failed to cancel order: ${err.message || err}`);
+    } finally {
+      setIsCancelling(null);
+    }
+  };
+
   const { data: userOrders, isLoading, error } = useQuery<Order[], Error>({
     queryKey: ['orders', user?.id],
     queryFn: async (): Promise<Order[]> => {
@@ -138,17 +193,15 @@ const Orders: React.FC = () => {
             zip_code,
             payment_method,
             delivery_otp,
+            driver_id,
             order_items (
               id, 
               product_id, 
-              product_name,
-              selected_unit,
               quantity, 
               price,
               products (
                 title,
-                image,
-                unit
+                image
               )
             )
           `)
@@ -173,11 +226,10 @@ const Orders: React.FC = () => {
               zip_code,
               payment_method,
               delivery_otp,
+              driver_id,
               order_items (
                 id, 
                 product_id, 
-                product_name,
-                selected_unit,
                 quantity, 
                 price
               )
@@ -194,7 +246,8 @@ const Orders: React.FC = () => {
         throw err;
       }
     },
-    enabled: !!user
+    enabled: !!user,
+    refetchInterval: 3000 // Realtime tracking: Refetch every 3 seconds to catch driver assignments instantly!
   });
 
   const submitOrderReview = async () => {
@@ -223,13 +276,12 @@ const Orders: React.FC = () => {
     }
   };
 
-  // Fetch product details separately
   const { data: products } = useQuery({
     queryKey: ['products'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('id, title, image, unit');
+        .select('id, title, image');
       if (error) return [];
       return data || [];
     },
@@ -244,25 +296,15 @@ const Orders: React.FC = () => {
     }, {} as Record<string, any>);
   }, [products]);
 
-  const getOrderItemProductName = (item: OrderItem, productInfo?: OrderItem['products']) =>
-    item.product_name || productInfo?.title || 'Product unavailable';
-
-  const getOrderItemPackSize = (item: OrderItem, productInfo?: OrderItem['products']) =>
-    item.selected_unit || productInfo?.unit || 'Pack size not recorded';
-
-  // ─────────────────────────────────────────────────────────
-  // BRAND THEMED INVOICE GENERATOR WITH DYNAMIC STATUS MATRIX
-  // ─────────────────────────────────────────────────────────
   const triggerInvoiceDownload = (order: Order) => {
     const doc = new jsPDF();
 
     autoTable(doc, {
       startY: 83,
-      // 🌟 TAX COLUMN POORI TARAH SE HATAYA HAI MATCH KARNE KE LIYE
       head: [['Product Description Title', 'Qty', 'Gross Amt', 'Discount', 'Taxable Val', 'Total']],
       body: order.order_items.map((item) => {
         const productInfo = item.products || productMap[item.product_id];
-        const title = `${getOrderItemProductName(item, productInfo)} (${getOrderItemPackSize(item, productInfo)})`;
+        const title = productInfo?.title || `Farm Product (ID: ${item.product_id.slice(0,6)})`;
         const qty = item.quantity;
         const unitPrice = item.price;
         const grossAmount = unitPrice * qty;
@@ -291,10 +333,9 @@ const Orders: React.FC = () => {
       }
     });
 
-    // Brand Header Layout
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(22);
-    doc.setTextColor(229, 57, 53); // SCR Brand Red Color Theme
+    doc.setTextColor(229, 57, 53); 
     doc.text('SCR Agro Farms', 14, 18);
     
     doc.setFontSize(9);
@@ -310,7 +351,6 @@ const Orders: React.FC = () => {
     doc.setLineWidth(0.5);
     doc.line(14, 26, 196, 26);
 
-    // Metadata Blocks Layout
     doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(0);
@@ -329,7 +369,6 @@ const Orders: React.FC = () => {
     doc.rect(14, 45, 182, 34);
     doc.line(105, 45, 105, 79); 
 
-    // Addresses Mapping
     doc.setFont('helvetica', 'bold');
     doc.text('Billed To:', 17, 50);
     doc.setFont('helvetica', 'normal');
@@ -348,18 +387,15 @@ const Orders: React.FC = () => {
 
     const lastY = (doc as any).lastAutoTable.finalY + 10;
 
-    // 🌟 DYNAMIC PAYMENT LIFECYCLE VALUE CHECKS
     let invoicePaymentStatus = "Paid"; 
     if (order.payment_method === 'cod') {
       invoicePaymentStatus = (order.status === 'delivered' || order.status === 'done') ? "Paid" : "Pending (Collect upon delivery)";
     }
 
-    // 🌟 SAFE PLAIN CONCATENATION (Fixes &1 Variable Bug completely)
     const grandTotalText = "Rs. " + Number(order.total || 0).toFixed(2);
     const paymentMethodText = "Payment Method: " + (PAYMENT_METHODS[order.payment_method as keyof typeof PAYMENT_METHODS] || order.payment_method);
     const paymentStatusText = "Payment Status: " + invoicePaymentStatus;
 
-    // Display summary footprint box
     doc.rect(120, lastY, 76, 22);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10.5);
@@ -428,6 +464,11 @@ const Orders: React.FC = () => {
             const statusConfig = STATUS_CONFIG[order?.status] || STATUS_CONFIG.pending;
             const StatusIcon = statusConfig.icon;
             const isExpanded = expandedOrders.has(order?.id);
+            
+            const isOrderComplete = order.status === 'delivered' || order.status === 'done';
+            
+            // 🌟 CRITICAL VALIDATION BINDING
+            const isCancellable = (order.status === 'pending' || order.status === 'paid') && !order.driver_id;
 
             return (
               <Card key={order?.id} className="w-full shadow-sm border-gray-200 hover:shadow-md transition-shadow bg-white">
@@ -466,7 +507,19 @@ const Orders: React.FC = () => {
                     </div>
 
                     <div className="flex flex-col items-end gap-2 ml-4">
-                      {/* Brand Aligned Download Invoice Button */}
+                      {/* 🌟 LINE 530 STRICTOR PIPELINE RESOLVED PERFECTLY HERE */}
+                      {isCancellable && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleCancelOrder(order.id)}
+                          disabled={isCancelling === order.id}
+                          className="min-w-[140px] rounded-md text-xs bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-xs transition-all font-medium h-8"
+                        >
+                          {isCancelling === order.id ? 'Cancelling...' : 'Cancel Order'}
+                        </Button>
+                      )}
+
                       <Button
                         variant="outline"
                         size="sm"
@@ -476,20 +529,22 @@ const Orders: React.FC = () => {
                         <Download className="w-3.5 h-3.5" /> Download Invoice
                       </Button>
 
-                      {/* Security Key Display */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
-                        disabled={!order.delivery_otp}
-                        className={`min-w-[130px] h-8 rounded-md text-xs transition-all ${
-                          order.delivery_otp 
-                            ? 'border-brand-red bg-red-50 text-brand-red hover:bg-brand-red hover:text-white font-medium animate-pulse' 
-                            : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'
+                      {!isOrderComplete && order.status !== 'cancelled' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
+                          disabled={!order.delivery_otp}
+                          className={`min-w-[130px] h-8 rounded-md text-xs transition-all ${
+                            order.delivery_otp 
+                              ? 'border-brand-red bg-red-50 text-brand-red hover:bg-brand-red hover:text-white font-medium animate-pulse' 
+                              : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'
                           }`}
-                      >
-                        {order.delivery_otp ? 'View Delivery OTP' : 'OTP pending'}
-                      </Button>
+                        >
+                          {order.delivery_otp ? 'View Delivery OTP' : 'OTP pending'}
+                        </Button>
+                      )}
+                      
                       <Button
                         variant="ghost"
                         size="sm"
@@ -516,18 +571,15 @@ const Orders: React.FC = () => {
                     <div className="space-y-4 sm:space-y-0 sm:divide-y sm:divide-gray-100">
                       {order?.order_items?.map((item) => {
                         const productInfo = item.products || productMap[item.product_id];
-                        const productName = getOrderItemProductName(item, productInfo);
-                        const packSize = getOrderItemPackSize(item, productInfo);
                         return (
                           <div key={item.id} className="pt-3 sm:py-4 flex flex-col w-full bg-gray-50 sm:bg-transparent rounded-xl p-3 sm:p-0">
                             <div className="flex flex-col sm:grid sm:grid-cols-4 gap-2 sm:gap-4 items-start sm:items-center w-full">
                               <div className="flex items-center space-x-3">
                                 {productInfo?.image && (
-                                  <img src={productInfo.image} alt={productName} className="w-12 h-12 object-cover rounded-md border" />
+                                  <img src={productInfo.image} alt={productInfo.title} className="w-12 h-12 object-cover rounded-md border" />
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productName}</p>
-                                  <p className="text-xs text-gray-500">Pack size: {packSize}</p>
+                                  <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productInfo?.title || `Product ${item.product_id.slice(0, 8)}`}</p>
                                   <p className="text-xs text-gray-400">ID: {item.product_id.slice(0, 8)}...</p>
                                 </div>
                               </div>
@@ -540,7 +592,6 @@ const Orders: React.FC = () => {
                       })}
                     </div>
                     
-                    {/* 🌟 REVIEW SYSTEM STAYS VISIBLE SYSTEM REGARDLESS OF DELIVERY CHECKS */}
                     <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-end w-full">
                       <Button 
                         size="sm" 
@@ -579,7 +630,6 @@ const Orders: React.FC = () => {
         </div>
       </div>
 
-      {/* OTP Modal */}
       <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
         <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
           <DialogHeader><DialogTitle>Delivery OTP Code</DialogTitle></DialogHeader>
@@ -590,7 +640,6 @@ const Orders: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Review Dialog Form */}
       <Dialog open={!!reviewOrderId} onOpenChange={(open) => !open && setReviewOrderId(null)}>
         <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
           <DialogHeader><DialogTitle className="text-lg font-bold">Rate Order Experience</DialogTitle></DialogHeader>
