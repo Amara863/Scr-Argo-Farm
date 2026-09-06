@@ -13,6 +13,11 @@ import { ArrowLeft, Check, Heart, ShoppingBag, ShoppingCart, Star, Truck } from 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
+interface ProductVariantOption {
+  unit: string;
+  price: number;
+}
+
 const ProductDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -20,6 +25,7 @@ const ProductDetail = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [quantity, setQuantity] = useState(1);
+  const [selectedUnit, setSelectedUnit] = useState('');
   const [isAddedToCart, setIsAddedToCart] = useState(false);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [isRecommendationsDrawerOpen, setIsRecommendationsDrawerOpen] = useState(false);
@@ -27,11 +33,11 @@ const ProductDetail = () => {
   const [reviewComment, setReviewComment] = useState('');
   const [reviewRating, setReviewRating] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [reviewImages, setReviewImages] = useState([]);
+  const [reviewImages, setReviewImages] = useState<File[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
   
   // Track image loading states
-  const [imageLoadingStates, setImageLoadingStates] = useState({});
+  const [imageLoadingStates, setImageLoadingStates] = useState<Record<string, 'loaded' | 'error'>>({});
 
   // Fetch product from Supabase
   const { data: product, isLoading, error } = useQuery({
@@ -47,6 +53,51 @@ const ProductDetail = () => {
     },
     enabled: !!id,
   });
+
+  const getVariantsFromProduct = (productItem: any): ProductVariantOption[] => {
+    const incomingVariants = Array.isArray(productItem?.variants) ? productItem.variants : [];
+
+    if (incomingVariants.length > 0) {
+      return incomingVariants
+        .filter(variant => variant && (variant.unit || variant.price))
+        .map(variant => ({
+          unit: String(variant.unit || '').trim(),
+          price: Number(variant.price || 0)
+        }));
+    }
+
+    if (productItem?.unit || productItem?.price) {
+      return [{
+        unit: String(productItem.unit || 'unit').trim() || 'unit',
+        price: Number(productItem.price || 0)
+      }];
+    }
+
+    return [];
+  };
+
+  const getResolvedVariantPrice = (productItem: any, unit: string) => {
+    const variants = getVariantsFromProduct(productItem);
+    const matchedVariant = variants.find(variant => variant.unit === unit);
+    return matchedVariant?.price ?? Number(productItem?.price || 0);
+  };
+
+  const normalizedVariants = useMemo(() => getVariantsFromProduct(product), [product]);
+  const selectedVariant = useMemo(() => {
+    return normalizedVariants.find(variant => variant.unit === selectedUnit) || normalizedVariants[0] || null;
+  }, [normalizedVariants, selectedUnit]);
+  const hasVariantSelection = normalizedVariants.length > 1;
+
+  useEffect(() => {
+    if (!product) return;
+
+    const variants = getVariantsFromProduct(product);
+    if (variants.length > 0) {
+      setSelectedUnit(prev => prev || variants[0].unit);
+    } else {
+      setSelectedUnit(product.unit || 'unit');
+    }
+  }, [product]);
 
   // Helper function to determine stock status (same as in Products.tsx)
   const getStockStatus = (product) => {
@@ -96,9 +147,9 @@ const ProductDetail = () => {
   }, [reviews]);
 
   // Updated mutation for adding a review with better error handling
-  const addReviewMutation = useMutation({
+  const addReviewMutation = useMutation<unknown, Error, { rating: number; comment: string; images: File[] }>({
     mutationFn: async (newReview) => {
-      let imageUrls = [];
+      let imageUrls: string[] = [];
       
       // Upload images if any
       if (newReview.images && newReview.images.length > 0) {
@@ -196,13 +247,16 @@ const ProductDetail = () => {
     setIsAddingToCart(true);
     
     try {
-      // Check existing cart item
+      const cartUnit = selectedUnit || product.unit || 'unit';
+
+      // Check existing cart item by product + selected unit so each variant is tracked independently
       const { data: existing } = await supabase
         .from('cart_items')
         .select('*')
         .eq('user_id', user.id)
         .eq('product_id', id)
-        .single();
+        .eq('selected_unit', cartUnit)
+        .maybeSingle();
 
       if (existing) {
         // Check if adding more would exceed stock
@@ -232,9 +286,10 @@ const ProductDetail = () => {
           return;
         }
 
-        await supabase.from('cart_items').insert({
+        await (supabase.from('cart_items') as any).insert({
           user_id: user.id,
           product_id: id,
+          selected_unit: cartUnit,
           quantity
         });
       }
@@ -251,6 +306,15 @@ const ProductDetail = () => {
   };
 
   const handleBuyNow = () => {
+    if (hasVariantSelection && !selectedUnit) {
+      toast({
+        title: "Please select a variant",
+        description: "Choose a pack size before continuing with Buy Now.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (isOutOfStock) {
       toast({
         title: "Out of Stock",
@@ -264,7 +328,15 @@ const ProductDetail = () => {
       toast({ title: "Login required", description: "Please login first", variant: "destructive" });
       navigate('/auth');
     } else {
-      navigate('/checkout');
+      const selectedVariantPrice = getResolvedVariantPrice(product, selectedUnit || product?.unit || 'unit');
+      navigate('/checkout', {
+        state: {
+          productId: id,
+          selectedUnit: selectedUnit || product?.unit || 'unit',
+          quantity,
+          price: selectedVariantPrice
+        }
+      });
     }
   };
 
@@ -312,8 +384,8 @@ const ProductDetail = () => {
     });
   };
 
-  const handleImageUpload = (e) => {
-    const files = Array.from(e.target.files);
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
     const maxImages = 3;
     const maxSize = 5 * 1024 * 1024; // 5MB per image
     
@@ -385,21 +457,21 @@ const ProductDetail = () => {
   };
 
   // Handle image loading states
-  const handleImageLoad = (imageKey) => {
+  const handleImageLoad = (imageKey: string) => {
     setImageLoadingStates(prev => ({
       ...prev,
       [imageKey]: 'loaded'
     }));
   };
 
-  const handleImageError = (imageKey) => {
+  const handleImageError = (imageKey: string) => {
     setImageLoadingStates(prev => ({
       ...prev,
       [imageKey]: 'error'
     }));
   };
 
-  const renderStars = (rating, interactive = false, onClick = () => {}) => (
+  const renderStars = (rating: number, interactive = false, onClick: (rating: number) => void = () => {}) => (
     <div className="flex">
       {[1, 2, 3, 4, 5].map((i) => (
         <Star
@@ -463,7 +535,27 @@ const ProductDetail = () => {
                 <span className="ml-2 text-xs text-gray-500">{averageRating.toFixed(1)} avg</span>
               )}
             </div>
-            <div className="text-xl font-bold text-brand-red mb-6">₹{product.price}</div>
+            {hasVariantSelection && (
+              <div className="mb-4">
+                <h3 className="font-semibold text-lg mb-3">Select Variant</h3>
+                <div className="flex flex-wrap gap-2">
+                  {normalizedVariants.map((variant) => (
+                    <button
+                      key={`${product.id}-${variant.unit}`}
+                      type="button"
+                      onClick={() => setSelectedUnit(variant.unit)}
+                      className={`px-3 py-2 rounded-lg border text-sm font-medium ${selectedUnit === variant.unit ? 'bg-brand-red text-white border-brand-red' : 'bg-white text-gray-700 border-gray-300 hover:border-brand-red'}`}
+                    >
+                      {variant.unit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="text-xl font-bold text-brand-red mb-6">
+              ₹{getResolvedVariantPrice(product, selectedUnit || product?.unit || 'unit')}
+            </div>
             <p className="mb-4 text-gray-700">{product.full_description || product.description}</p>
             <div className="space-y-3 mb-8">
               <h3 className="font-semibold text-lg">Benefits:</h3>
@@ -680,7 +772,7 @@ const ProductDetail = () => {
               onChange={e => setReviewComment(e.target.value)}
               placeholder="Write your review here..."
               className="w-full p-3 border rounded-lg resize-none"
-              rows="4"
+              rows={4}
               required
               maxLength={500}
             />

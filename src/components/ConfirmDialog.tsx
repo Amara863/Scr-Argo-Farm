@@ -15,12 +15,18 @@ export function ConfirmDialog({
   onConfirm,
   title = "Are you sure?",
   description = "This action cannot be undone.",
+  confirmText = "Confirm",
+  cancelText = "Cancel",
+  variant,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
   title?: string;
   description?: string;
+  confirmText?: string;
+  cancelText?: string;
+  variant?: "default" | "destructive";
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -39,14 +45,14 @@ export function ConfirmDialog({
             onClick={() => onOpenChange(false)}
             className="border-gray-400 text-gray-800 dark:text-gray-200 dark:border-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800"
           >
-            Cancel
+            {cancelText}
           </Button>
           <Button
-            variant="destructive"
+            variant={variant || "destructive"}
             onClick={onConfirm}
             className="bg-red-600 hover:bg-red-700 text-white shadow"
           >
-            Confirm Delete
+            {confirmText}
           </Button>
         </DialogFooter>
       </DialogContent>

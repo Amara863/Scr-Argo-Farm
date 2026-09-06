@@ -6,16 +6,25 @@ import { Button } from '@/components/ui/button';
 import { Trash2, Plus, Minus, ShoppingBag, ShoppingCart, ArrowLeft, Heart, Star } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { Product } from '@/types/products';
+
+interface CartProduct {
+  id: string;
+  title: string;
+  image: string;
+  price: string | number;
+  unit: string;
+  variants?: Array<{ unit: string; price: string | number }>;
+}
 
 interface CartItem {
   id: string;
   user_id: string;
   product_id: string;
+  selected_unit?: string | null;
   quantity: number;
   created_at: string;
   updated_at: string;
-  product?: Product;
+  product?: CartProduct;
 }
 
 const Cart = () => {
@@ -42,7 +51,7 @@ const Cart = () => {
   });
 
   // Fetch product details
-  const { data: products } = useQuery<Product[]>({
+  const { data: products } = useQuery<CartProduct[]>({
     queryKey: ['products-for-cart'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -50,7 +59,7 @@ const Cart = () => {
         .select('*');
         
       if (error) throw error;
-      return data as Product[];
+      return data as CartProduct[];
     },
   });
 
@@ -107,18 +116,33 @@ const Cart = () => {
     }
   });
 
+  const resolveLatestProductPrice = (product?: CartProduct, selectedUnit?: string | null) => {
+    const variants = Array.isArray(product?.variants) ? product.variants : [];
+    const normalizedSelectedUnit = String(selectedUnit || '').trim().toLowerCase();
+
+    if (variants.length > 0 && normalizedSelectedUnit) {
+      const matchedVariant = variants.find(variant => String(variant.unit || '').trim().toLowerCase() === normalizedSelectedUnit);
+      if (matchedVariant) {
+        return Number(matchedVariant.price || 0);
+      }
+    }
+
+    return Number(product?.price || 0);
+  };
+
   // Find product details for cart items
   const cartWithProducts = cartItems?.map(item => {
     const product = products?.find(p => p.id === item.product_id || p.id.toString() === item.product_id);
     return {
       ...item,
-      product
+      product,
+      resolvedPrice: resolveLatestProductPrice(product, item.selected_unit)
     };
   }) || [];
 
   // Calculate total with shipping
   const subtotal = cartWithProducts.reduce((sum, item) => {
-    return sum + (Number(item.product?.price || 0) * item.quantity);
+    return sum + (Number(item.resolvedPrice || 0) * item.quantity);
   }, 0);
   const shippingCost = subtotal >= 200 ? 0 : 50;
   const total = subtotal + shippingCost;
@@ -291,7 +315,7 @@ const Cart = () => {
                                 <div className="flex-1 min-w-0 pr-2">
                                   <h3 className="text-sm lg:text-lg font-bold text-slate-900 mb-1 truncate">{item.product?.title}</h3>
                                   <p className="text-xs lg:text-sm text-slate-500 bg-slate-100 px-2 py-0.5 lg:px-3 lg:py-1 rounded-full inline-block">
-                                    ₹{item.product?.price} per {item.product?.unit}
+                                    ₹{item.resolvedPrice.toFixed(2)} per {item.selected_unit || item.product?.unit}
                                   </p>
                                   <div className="flex items-center mt-1 lg:mt-2 space-x-1 lg:space-x-2">
                                     <div className="w-1.5 h-1.5 lg:w-2 lg:h-2 bg-emerald-500 rounded-full"></div>
@@ -336,10 +360,10 @@ const Cart = () => {
                                 
                                 <div className="text-right">
                                   <p className="text-lg lg:text-2xl font-bold text-slate-900">
-                                    ₹{(Number(item.product?.price || 0) * item.quantity).toFixed(2)}
+                                    ₹{(Number(item.resolvedPrice || 0) * item.quantity).toFixed(2)}
                                   </p>
                                   <p className="text-xs lg:text-sm text-slate-500">
-                                    {item.quantity} × ₹{item.product?.price}
+                                    {item.quantity} × ₹{item.resolvedPrice.toFixed(2)}
                                   </p>
                                 </div>
                               </div>

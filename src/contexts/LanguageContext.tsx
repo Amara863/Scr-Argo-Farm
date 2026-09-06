@@ -106,8 +106,10 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 
+type LanguageContextValue = { selectedLanguage: string; changeLanguage: (languageCode: string) => Promise<void>; isTranslating: boolean; languages: { code: string; name: string }[]; useTranslation: (text: string) => { text: string; isLoading: boolean }; translateContent: (content: string, targetLang: string) => Promise<string> };
+
 // Create Language Context
-const LanguageContext = createContext();
+const LanguageContext = createContext<LanguageContextValue | undefined>(undefined);
 
 // Translation service
 const translateText = async (text, targetLang) => {
@@ -135,7 +137,7 @@ export const LanguageProvider = ({ children }) => {
   ];
 
   // Translation cache to avoid re-translating same content
-  const [translationCache, setTranslationCache] = useState({});
+  const [translationCache, setTranslationCache] = useState<Record<string, string>>({});
 
   const translateContent = async (content, targetLang) => {
     if (targetLang === 'en') return content;

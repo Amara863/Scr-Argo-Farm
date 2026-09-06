@@ -13,6 +13,7 @@ const ResetPassword = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { updatePassword } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     // Handle the auth callback from the email link

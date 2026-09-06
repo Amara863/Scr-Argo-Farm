@@ -27,24 +27,6 @@ const LanguageSelector = ({
     alert(`Language switched to ${language.name}`);
   };
 
-  const useTranslation = (text: string) => {
-    const [translatedText, setTranslatedText] = useState(text);
-
-    useEffect(() => {
-      const getTranslation = async () => {
-        if (selectedLanguage === 'en') {
-          setTranslatedText(text);
-        } else {
-          const translated = await translateContent(text, selectedLanguage);
-          setTranslatedText(translated);
-        }
-      };
-      getTranslation();
-    }, [text, selectedLanguage]);
-
-    return translatedText;
-  };
-
   return (
     <div className="relative">
       <button

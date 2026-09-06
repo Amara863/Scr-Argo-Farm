@@ -1,55 +1,69 @@
+// import { Badge } from '@/components/ui/badge';
+// import { Button } from '@/components/ui/button';
+// import {
+//   Table,
+//   TableBody,
+//   TableCell,
+//   TableHead,
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useQuery, useQueryClient } from '@tanstack/react-query'; 
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { CheckCircle, ChevronDown, ChevronUp, Clock, Package, Truck, XCircle, Star, Download } from 'lucide-react';
+import {
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Package,
+  Truck,
+  XCircle,
+  Star,
+  ShoppingCart
+} from 'lucide-react';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
+// Define order status colors and icons
 const STATUS_CONFIG = {
   pending: {
-    color: 'bg-red-50 text-brand-red border-red-100',
+    color: 'bg-yellow-100 text-yellow-800 border-yellow-200',
     icon: Clock,
-    label: 'Order Placed (COD)'
+    label: 'Cash on Delivery'
   },
   paid: {
-    color: 'bg-red-50 text-brand-red border-red-100',
+    color: 'bg-green-100 text-green-800 border-green-200',
     icon: CheckCircle,
-    label: 'Payment Received / Preparing'
+    label: 'Paid'
   },
   shipped: {
-    color: 'bg-red-50 text-brand-red border-red-100',
+    color: 'bg-blue-100 text-blue-800 border-blue-200',
     icon: Truck,
-    label: 'Out for Delivery / Shipped'
+    label: 'Shipped'
   },
   delivered: {
-    color: 'bg-red-600 text-white border-transparent',
+    color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     icon: Package,
     label: 'Delivered'
   },
   done: {
-    color: 'bg-red-600 text-white border-transparent',
+    color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     icon: Package,
     label: 'Delivered'
   },
   failed: {
-    color: 'bg-gray-100 text-gray-800 border-gray-200',
+    color: 'bg-red-100 text-red-800 border-red-200',
     icon: XCircle,
     label: 'Failed'
-  },
-  cancelled: { 
-    color: 'bg-gray-100 text-gray-500 border-gray-200 line-through',
-    icon: XCircle,
-    label: 'Cancelled'
   }
 };
 
+// Payment method labels
 const PAYMENT_METHODS = {
   cod: 'Cash on Delivery',
   online: 'Online Payment',
@@ -84,22 +98,22 @@ interface Order {
   zip_code: string;
   payment_method: string;
   delivery_otp: string | null;
-  driver_id: string | null;
   order_items: OrderItem[];
 }
 
 const Orders: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const queryClient = useQueryClient(); 
+  const queryClient = useQueryClient();
+const { toast } = useToast();
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [selectedOtp, setSelectedOtp] = useState<string | null>(null);
   const [showOtpModal, setShowOtpModal] = useState(false);
   
+  // Review control states
   const [reviewOrderId, setReviewOrderId] = useState<string | null>(null);
   const [rating, setRating] = useState<number>(5);
   const [comment, setComment] = useState<string>('');
-  const [isCancelling, setIsCancelling] = useState<string | null>(null);
 
   const handleShowOtp = (otp: string) => {
     setSelectedOtp(otp);
@@ -118,59 +132,7 @@ const Orders: React.FC = () => {
     });
   };
 
-  const handleCancelOrder = async (orderId: string) => {
-    if (!window.confirm("Are you sure you want to cancel this order?")) return;
-    
-    setIsCancelling(orderId);
-    try {
-      const { data: orderItems, error: itemsError } = await supabase
-        .from('order_items')
-        .select('product_id, quantity')
-        .eq('order_id', orderId);
-
-      if (itemsError) throw itemsError;
-
-      const { error: updateOrderError } = await supabase
-        .from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', orderId);
-
-      if (updateOrderError) throw updateOrderError;
-
-      if (orderItems && orderItems.length > 0) {
-        for (const item of orderItems) {
-          const { data: product, error: productError } = await supabase
-            .from('products')
-            .select('stock_quantity')
-            .eq('id', item.product_id)
-            .single();
-
-          if (productError) throw productError;
-
-          const currentStock = product.stock_quantity || 0;
-          const restoredStock = currentStock + item.quantity;
-
-          const { error: stockUpdateError } = await supabase
-            .from('products')
-            .update({ stock_quantity: restoredStock })
-            .eq('id', item.product_id);
-
-          if (stockUpdateError) throw stockUpdateError;
-        }
-      }
-
-      alert("Order cancelled successfully and stock restored!");
-      queryClient.invalidateQueries({ queryKey: ['orders', user?.id] });
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-
-    } catch (err: any) {
-      console.error('Cancellation pipeline failure:', err);
-      alert(`Failed to cancel order: ${err.message || err}`);
-    } finally {
-      setIsCancelling(null);
-    }
-  };
-
+  // Fetch user's orders
   const { data: userOrders, isLoading, error } = useQuery<Order[], Error>({
     queryKey: ['orders', user?.id],
     queryFn: async (): Promise<Order[]> => {
@@ -193,7 +155,6 @@ const Orders: React.FC = () => {
             zip_code,
             payment_method,
             delivery_otp,
-            driver_id,
             order_items (
               id, 
               product_id, 
@@ -226,7 +187,6 @@ const Orders: React.FC = () => {
               zip_code,
               payment_method,
               delivery_otp,
-              driver_id,
               order_items (
                 id, 
                 product_id, 
@@ -246,8 +206,7 @@ const Orders: React.FC = () => {
         throw err;
       }
     },
-    enabled: !!user,
-    refetchInterval: 3000 // Realtime tracking: Refetch every 3 seconds to catch driver assignments instantly!
+    enabled: !!user
   });
 
   const submitOrderReview = async () => {
@@ -275,7 +234,69 @@ const Orders: React.FC = () => {
       alert("Failed to submit review.");
     }
   };
+  const reorderMutation = useMutation({
+  mutationFn: async (order: Order) => {
+    if (!user) throw new Error("Login required");
 
+    for (const item of order.order_items) {
+
+      const { data: existing } = await supabase
+        .from("cart_items")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("product_id", item.product_id)
+        .maybeSingle();
+
+      if (existing) {
+
+        await supabase
+          .from("cart_items")
+          .update({
+            quantity: existing.quantity + item.quantity,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", existing.id);
+
+      } else {
+
+        await supabase
+          .from("cart_items")
+          .insert({
+            user_id: user.id,
+            product_id: item.product_id,
+            quantity: item.quantity
+          });
+
+      }
+    }
+  },
+
+  onSuccess: () => {
+
+    queryClient.invalidateQueries({
+      queryKey: ["cart"]
+    });
+
+    toast({
+      title: "Reordered Successfully",
+      description: "Products added to cart."
+    });
+
+     navigate("/cart");
+  },
+
+  onError: (error: any) => {
+
+    toast({
+      title: "Error",
+      description: error.message,
+      variant: "destructive"
+    });
+
+  }
+});
+
+  // Fetch product details separately if needed
   const { data: products } = useQuery({
     queryKey: ['products'],
     queryFn: async () => {
@@ -295,131 +316,6 @@ const Orders: React.FC = () => {
       return acc;
     }, {} as Record<string, any>);
   }, [products]);
-
-  const triggerInvoiceDownload = (order: Order) => {
-    const doc = new jsPDF();
-
-    autoTable(doc, {
-      startY: 83,
-      head: [['Product Description Title', 'Qty', 'Gross Amt', 'Discount', 'Taxable Val', 'Total']],
-      body: order.order_items.map((item) => {
-        const productInfo = item.products || productMap[item.product_id];
-        const title = productInfo?.title || `Farm Product (ID: ${item.product_id.slice(0,6)})`;
-        const qty = item.quantity;
-        const unitPrice = item.price;
-        const grossAmount = unitPrice * qty;
-        const discount = 0.00;
-        const taxableVal = grossAmount - discount;
-
-        return [
-          title,
-          qty,
-          "Rs. " + grossAmount.toFixed(2),
-          "-Rs. " + discount.toFixed(2),
-          "Rs. " + taxableVal.toFixed(2),
-          "Rs. " + taxableVal.toFixed(2)
-        ];
-      }),
-      theme: 'grid',
-      headStyles: { fillColor: [229, 57, 53], textColor: [255, 255, 255], fontSize: 8.5, fontStyle: 'bold' },
-      bodyStyles: { fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: 70 },
-        1: { halign: 'center' },
-        2: { halign: 'right' },
-        3: { halign: 'right' },
-        4: { halign: 'right' },
-        5: { halign: 'right' }
-      }
-    });
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(22);
-    doc.setTextColor(229, 57, 53); 
-    doc.text('SCR Agro Farms', 14, 18);
-    
-    doc.setFontSize(9);
-    doc.setTextColor(100);
-    doc.text('Premium Farm Fresh Organic Produce Network', 14, 23);
-
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Tax Invoice', 152, 18);
-
-    doc.setDrawColor(229, 57, 53);
-    doc.setLineWidth(0.5);
-    doc.line(14, 26, 196, 26);
-
-    doc.setFontSize(8.5);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0);
-    doc.text('Sold By: SCR Agro Farms Distribution Pvt Ltd.', 14, 32);
-    doc.text('Ship-from Address: Warehouse Block-4, Farukhnagar, HR - 122503', 14, 36);
-    doc.text('GSTIN - 06AAFCH0247Q1ZC | PAN - AAFCH0247Q', 14, 40);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text("Order ID: " + (order.order_number || order.id.slice(0, 12).toUpperCase()), 125, 32);
-    doc.setFont('helvetica', 'normal');
-    doc.text("Order Date: " + new Date(order.created_at).toLocaleDateString('en-IN'), 125, 36);
-    doc.text("Invoice No: #FAJ3RS" + order.id.slice(0, 8).toUpperCase(), 125, 40);
-
-    doc.setDrawColor(210);
-    doc.setLineWidth(0.1);
-    doc.rect(14, 45, 182, 34);
-    doc.line(105, 45, 105, 79); 
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Billed To:', 17, 50);
-    doc.setFont('helvetica', 'normal');
-    doc.text(String(order.name || 'Amara Firdous'), 17, 55);
-    doc.text(String(order.address || 'Saltanat Plaza, Okhla'), 17, 60);
-    doc.text(String((order.city || 'New Delhi') + ", " + (order.state || 'Delhi') + " - " + (order.zip_code || '110025')), 17, 65);
-    doc.text("Phone: " + String(order.phone || 'N/A'), 17, 70);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Shipped To:', 108, 50);
-    doc.setFont('helvetica', 'normal');
-    doc.text(String(order.name || 'Amara Firdous'), 108, 55);
-    doc.text(String(order.address || 'Saltanat Plaza, Okhla'), 108, 60);
-    doc.text(String((order.city || 'New Delhi') + ", " + (order.state || 'Delhi') + " - " + (order.zip_code || '110025')), 108, 65);
-    doc.text("Phone: " + String(order.phone || 'N/A'), 108, 70);
-
-    const lastY = (doc as any).lastAutoTable.finalY + 10;
-
-    let invoicePaymentStatus = "Paid"; 
-    if (order.payment_method === 'cod') {
-      invoicePaymentStatus = (order.status === 'delivered' || order.status === 'done') ? "Paid" : "Pending (Collect upon delivery)";
-    }
-
-    const grandTotalText = "Rs. " + Number(order.total || 0).toFixed(2);
-    const paymentMethodText = "Payment Method: " + (PAYMENT_METHODS[order.payment_method as keyof typeof PAYMENT_METHODS] || order.payment_method);
-    const paymentStatusText = "Payment Status: " + invoicePaymentStatus;
-
-    doc.rect(120, lastY, 76, 22);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
-    doc.text('Grand Total:', 124, lastY + 6);
-    doc.text(grandTotalText, 158, lastY + 6);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.text(paymentMethodText, 124, lastY + 12);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.text(paymentStatusText, 124, lastY + 17);
-
-    doc.setFontSize(7.5);
-    doc.setTextColor(110);
-    doc.text('Declaration: The goods sold are intended for retail end user consumption and not for commercial resale.', 14, lastY + 30);
-    doc.text('This document is a certified system computer-generated tax invoice. No manual signatures are demanded.', 14, lastY + 34);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(229, 57, 53);
-    doc.text('Thank you for choosing SCR Agro Farms! Enjoy fresh organic produce.', 14, lastY + 42);
-
-    doc.save(`SCR_Agro_Farms_Invoice_${order.id.slice(0, 8).toUpperCase()}.pdf`);
-  };
 
   if (isLoading) {
     return (
@@ -466,30 +362,27 @@ const Orders: React.FC = () => {
             const isExpanded = expandedOrders.has(order?.id);
             
             const isOrderComplete = order.status === 'delivered' || order.status === 'done';
-            
-            // 🌟 CRITICAL VALIDATION BINDING
-            const isCancellable = (order.status === 'pending' || order.status === 'paid') && !order.driver_id;
 
             return (
-              <Card key={order?.id} className="w-full shadow-sm border-gray-200 hover:shadow-md transition-shadow bg-white">
+              <Card key={order?.id} className="w-full shadow-sm border-gray-500 hover:shadow-md transition-shadow hover:border-gray-900 hover:bg-gray-300">
                 <CardHeader className="pb-4">
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <div className="mb-2">
                         <div className="mb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 text-left">
                           <div className="flex flex-col items-start">
-                            <CardTitle className="text-lg font-semibold text-gray-900">
+                            <CardTitle className="text-lg font-semibold">
                               Order #{order?.order_number || order?.id.slice(0, 8).toUpperCase()}
                             </CardTitle>
                             <div className="sm:hidden mt-1">
-                              <Badge className={`${statusConfig.color} border font-medium w-fit px-2.5 py-0.5 rounded-full text-xs`}>
+                              <Badge className={`${statusConfig.color} border font-medium w-fit`}>
                                 <StatusIcon className="h-3 w-3 mr-1" />
                                 {statusConfig.label}
                               </Badge>
                             </div>
                           </div>
                           <div className="hidden sm:block">
-                            <Badge className={`${statusConfig.color} border font-medium w-fit px-2.5 py-0.5 rounded-full text-xs`}>
+                            <Badge className={`${statusConfig.color} border font-medium w-fit`}>
                               <StatusIcon className="h-3 w-3 mr-1" />
                               {statusConfig.label}
                             </Badge>
@@ -502,54 +395,35 @@ const Orders: React.FC = () => {
                         <span>•</span>
                         <span>{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
                         <span>•</span>
-                        <span className="font-semibold text-gray-900">₹{order?.total.toFixed(2)}</span>
+                        <span className="font-medium text-gray-900">₹{order?.total.toFixed(2)}</span>
                       </div>
                     </div>
 
                     <div className="flex flex-col items-end gap-2 ml-4">
-                      {/* 🌟 LINE 530 STRICTOR PIPELINE RESOLVED PERFECTLY HERE */}
-                      {isCancellable && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleCancelOrder(order.id)}
-                          disabled={isCancelling === order.id}
-                          className="min-w-[140px] rounded-md text-xs bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-xs transition-all font-medium h-8"
-                        >
-                          {isCancelling === order.id ? 'Cancelling...' : 'Cancel Order'}
-                        </Button>
-                      )}
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => triggerInvoiceDownload(order)}
-                        className="min-w-[140px] rounded-md text-xs border-brand-red bg-red-50 text-brand-red hover:bg-brand-red hover:text-white flex items-center justify-center gap-1.5 shadow-xs transition-all font-medium h-8"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Download Invoice
-                      </Button>
-
-                      {!isOrderComplete && order.status !== 'cancelled' && (
+                      {!isOrderComplete && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => order.delivery_otp && handleShowOtp(order.delivery_otp)}
                           disabled={!order.delivery_otp}
-                          className={`min-w-[130px] h-8 rounded-md text-xs transition-all ${
-                            order.delivery_otp 
-                              ? 'border-brand-red bg-red-50 text-brand-red hover:bg-brand-red hover:text-white font-medium animate-pulse' 
-                              : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'
-                          }`}
+                          className={`min-w-[110px] rounded-md text-xs sm:text-sm transition-all ${order.delivery_otp ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100' : 'border-slate-300 bg-slate-100 text-slate-500 cursor-not-allowed'}`}
                         >
-                          {order.delivery_otp ? 'View Delivery OTP' : 'OTP pending'}
+                          {order.delivery_otp ? 'View OTP' : 'OTP pending'}
                         </Button>
                       )}
-                      
+                      <Button
+    size="sm"
+    className="bg-green-600 hover:bg-green-700 text-white"
+    onClick={() => reorderMutation.mutate(order)}
+>
+    <ShoppingCart className="w-4 h-4 mr-2" />
+    Reorder
+</Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => toggleOrderExpansion(order?.id)}
-                        className="flex items-center gap-1 text-gray-500 hover:text-gray-900 text-xs sm:text-sm h-7"
+                        className="flex items-center gap-1 text-gray-600 hover:text-gray-900 text-xs sm:text-sm"
                       >
                         {isExpanded ? (<><ChevronUp className="h-4 w-4" />Less Details</>) : (<><ChevronDown className="h-4 w-4" />More Details</>)}
                       </Button>
@@ -558,7 +432,7 @@ const Orders: React.FC = () => {
                 </CardHeader>
 
                 <CardContent className="pt-0">
-                  <div className="w-full border rounded-lg bg-white shadow-xs px-4 py-3 sm:px-6 sm:py-4">
+                  <div className="w-full border rounded-lg bg-white shadow-sm px-4 py-3 sm:px-6 sm:py-4">
                     <div className="hidden sm:block bg-gray-50 px-4 py-3 border-b rounded-t-lg">
                       <div className="grid grid-cols-4 gap-4 text-sm font-semibold text-gray-700">
                         <span>Product</span>
@@ -580,43 +454,45 @@ const Orders: React.FC = () => {
                                 )}
                                 <div className="min-w-0 flex-1">
                                   <p className="font-medium text-gray-900 truncate text-sm sm:text-base">{productInfo?.title || `Product ${item.product_id.slice(0, 8)}`}</p>
-                                  <p className="text-xs text-gray-400">ID: {item.product_id.slice(0, 8)}...</p>
+                                  <p className="text-xs text-gray-500">ID: {item.product_id.slice(0, 8)}...</p>
                                 </div>
                               </div>
-                              <div className="hidden sm:flex font-medium text-gray-700">{item.quantity}</div>
-                              <div className="hidden sm:flex font-medium text-gray-700">₹{item.price.toFixed(2)}</div>
-                              <div className="hidden sm:flex justify-end font-semibold text-base text-right text-gray-900">₹{(item.quantity * item.price).toFixed(2)}</div>
+                              <div className="hidden sm:flex font-medium">{item.quantity}</div>
+                              <div className="hidden sm:flex font-medium">₹{item.price.toFixed(2)}</div>
+                              <div className="hidden sm:flex justify-end font-semibold text-base text-right">₹{(item.quantity * item.price).toFixed(2)}</div>
                             </div>
                           </div>
                         );
                       })}
                     </div>
                     
-                    <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-end w-full">
-                      <Button 
-                        size="sm" 
-                        onClick={() => setReviewOrderId(order.id)}
-                        className="bg-brand-red hover:bg-brand-red/90 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all h-8"
-                      >
-                        <Star className="w-3.5 h-3.5 fill-current text-red-100" /> Rate Order & Delivery Experience
-                      </Button>
-                    </div>
+                    {isOrderComplete && (
+                      <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-end w-full">
+                        <Button 
+                          size="sm" 
+                          onClick={() => setReviewOrderId(order.id)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all border border-amber-600/20"
+                        >
+                          <Star className="w-3.5 h-3.5 fill-current text-amber-100" /> Rate Order & Delivery Experience
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {isExpanded && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-6 pt-6 border-t border-gray-200">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="bg-gray-50 p-4 rounded-lg">
-                          <h3 className="font-semibold mb-3 flex items-center gap-2 text-gray-800"><div className="w-2 h-2 bg-brand-red rounded-full"></div>Customer Info</h3>
+                          <h3 className="font-semibold mb-3 flex items-center gap-2"><div className="w-2 h-2 bg-blue-500 rounded-full"></div>Customer Info</h3>
                           <div className="space-y-2 text-sm">
-                            <div className="flex justify-between"><span className="text-gray-600">Name:</span><span className="font-medium text-gray-900">{order?.name || 'Not provided'}</span></div>
-                            <div className="flex justify-between"><span className="text-gray-600">Email:</span><span className="font-medium text-gray-900">{order?.email || 'Not provided'}</span></div>
-                            <div className="flex justify-between"><span className="text-gray-600">Phone:</span><span className="font-medium text-gray-900">{order.phone || 'Not provided'}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-600">Name:</span><span className="font-medium">{order?.name || 'Not provided'}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-600">Email:</span><span className="font-medium">{order?.email || 'Not provided'}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-600">Phone:</span><span className="font-medium">{order.phone || 'Not provided'}</span></div>
                           </div>
                         </div>
                         <div className="bg-gray-50 p-4 rounded-lg">
-                          <h3 className="font-semibold mb-3 flex items-center gap-2 text-gray-800"><div className="w-2 h-2 bg-red-400 rounded-full"></div>Delivery Address</h3>
-                          <div className="text-sm text-gray-900">
+                          <h3 className="font-semibold mb-3 flex items-center gap-2"><div className="w-2 h-2 bg-green-500 rounded-full"></div>Delivery Address</h3>
+                          <div className="text-sm">
                             {order.address ? <p className="font-medium">{order.address}, {order.city}, {order.state}</p> : <p className="text-gray-500 italic">No address provided</p>}
                           </div>
                         </div>
@@ -630,16 +506,18 @@ const Orders: React.FC = () => {
         </div>
       </div>
 
+      {/* OTP Modal */}
       <Dialog open={showOtpModal} onOpenChange={setShowOtpModal}>
         <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
-          <DialogHeader><DialogTitle>Delivery OTP Code</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Delivery OTP</DialogTitle></DialogHeader>
           <div className="text-center space-y-4 py-2">
-            <p className="text-sm text-gray-600">Share this security code with your delivery partner to receive products:</p>
-            <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-red-50 px-6 py-4 text-4xl font-semibold tracking-widest text-brand-red shadow-sm">{selectedOtp}</div>
+            <p className="text-sm text-gray-600">Share this code with the delivery partner:</p>
+            <div className="mx-auto inline-flex items-center justify-center rounded-3xl bg-blue-50 px-6 py-4 text-4xl font-semibold tracking-widest text-blue-700 shadow-sm">{selectedOtp}</div>
           </div>
         </DialogContent>
       </Dialog>
 
+      {/* Review Dialog Form */}
       <Dialog open={!!reviewOrderId} onOpenChange={(open) => !open && setReviewOrderId(null)}>
         <DialogContent className="sm:max-w-md w-full rounded-2xl bg-white p-6 shadow-xl">
           <DialogHeader><DialogTitle className="text-lg font-bold">Rate Order Experience</DialogTitle></DialogHeader>
@@ -662,12 +540,12 @@ const Orders: React.FC = () => {
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder="How was the overall delivery timeline and service quality?"
-                className="w-full border p-2.5 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-red-500 outline-none h-24 resize-none"
+                className="w-full border p-2.5 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setReviewOrderId(null)}>Cancel</Button>
-              <Button onClick={submitOrderReview} className="bg-brand-red hover:bg-brand-red/90 text-white">Submit Feedback</Button>
+              <Button onClick={submitOrderReview} className="bg-amber-500 hover:bg-amber-600 text-white">Submit Feedback</Button>
             </div>
           </div>
         </DialogContent>

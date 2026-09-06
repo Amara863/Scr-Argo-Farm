@@ -17,6 +17,7 @@ interface ProductCardProps {
   id: string | number;
   stockQuantity?: number;
   stockStatus?: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+  isPreviouslyPurchased?: boolean;
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({ 
@@ -27,7 +28,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
   description, 
   id,
   stockQuantity = 0,
-  stockStatus = 'OUT_OF_STOCK'
+   stockStatus = 'OUT_OF_STOCK',
+  isPreviouslyPurchased = false,
 }) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -147,6 +149,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
         <div className="absolute top-2 right-2 bg-brand-red text-white text-xs px-2 py-1 rounded-full">
           A2 Sahiwal
         </div>
+
+        {isPreviouslyPurchased && (
+  <div className="absolute bottom-2 left-2 z-20 bg-yellow-100 text-gray-900 text-xs font-semibold px-3 py-1.5 rounded-md shadow">
+    Buy Again
+  </div>
+)}
         
         {/* Stock Status Badge */}
         {stockQuantity > 0 && (

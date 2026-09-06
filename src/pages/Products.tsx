@@ -23,7 +23,7 @@ interface Product {
   min_stock_level: number;
   max_stock_level: number;
   actual_stock: number; // Live stock from stock_movements
-  stock_status: 'in_stock' | 'low_stock' | 'out_of_stock';
+  stock_status: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
   created_at?: string;
   updated_at?: string;
 }
@@ -43,6 +43,48 @@ const Products = () => {
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
   const queryClient = useQueryClient();
+  const [purchasedProductIds, setPurchasedProductIds] = useState<Set<string>>(new Set());
+  // Get products from the most recent order
+useEffect(() => {
+  const getRecentlyPurchasedProducts = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    // Get the latest order of the logged-in user
+    const { data: latestOrder, error: orderError } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (orderError || !latestOrder) {
+      setPurchasedProductIds(new Set());
+      return;
+    }
+
+    // Get products from that latest order
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("product_id")
+      .eq("order_id", latestOrder.id);
+
+    if (itemsError || !orderItems) {
+      setPurchasedProductIds(new Set());
+      return;
+    }
+
+    setPurchasedProductIds(
+      new Set(orderItems.map((item) => String(item.product_id)))
+    );
+  };
+
+  getRecentlyPurchasedProducts();
+}, []);
 
   // Set up real-time subscription for live stock updates
   useEffect(() => {
@@ -301,8 +343,9 @@ const Products = () => {
                               description={product.description}
                               stockQuantity={product.actual_stock} // Use live stock instead of DB stock
                               stockStatus={product.stock_status}
-                              minStockLevel={product.min_stock_level}
-                              maxStockLevel={product.max_stock_level}
+                              isPreviouslyPurchased={purchasedProductIds.has(String(product.id))}
+    
+                            
                             />
                           </div>
                         );
@@ -586,6 +629,128 @@ const Products = () => {
           </div>
         </div>
       </section>
+
+    {/* FAQ Section */}
+    <section className="py-16 bg-white">
+      <div className="section-container">
+        <div className="glass-panel p-8 max-w-4xl mx-auto">
+          
+          <h2 className="text-2xl font-display font-semibold mb-8 text-center">
+            Frequently Asked Questions
+          </h2>
+
+          <div className="space-y-4">
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                1. What type of milk and dairy products do you offer?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                We offer fresh A2 milk and a variety of traditional dairy
+                products including A2 butter, buttermilk, paneer, milkshakes,
+                sweets and other dairy products.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                2. What is A2 milk?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                A2 milk is milk that contains the A2 type of beta-casein
+                protein. Our products are prepared using milk sourced from
+                A2 Sahiwal cows.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                3. Where does your milk come from?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Our milk comes from Sahiwal cows and is prepared using
+                traditional dairy practices with a focus on freshness and
+                quality.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                4. How can I place an order?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Select your desired products, add them to your cart, proceed
+                to checkout, and provide your delivery details to place your
+                order.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                5. Do you provide home delivery?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Yes, home delivery is available for eligible locations.
+                Delivery availability is shown during the ordering process.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                6. What payment methods are available?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Currently, Cash on Delivery is available for orders. Payment
+                options may vary depending on your delivery location.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                7. How can I check my order status?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                You can check your order status by visiting the My Orders
+                section after logging into your account.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                8. Can I reorder products I purchased earlier?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Yes. You can use the Reorder option in the My Orders section
+                to quickly order products from a previous order.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                9. How should dairy products be stored?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                Dairy products should generally be refrigerated and consumed
+                according to the storage and best-before instructions provided
+                with the product.
+              </p>
+            </details>
+
+            <details className="border rounded-lg p-4">
+              <summary className="font-semibold cursor-pointer">
+                10. How can I contact SCR Agro Farms?
+              </summary>
+              <p className="mt-3 text-gray-600">
+                You can contact us using the phone numbers provided in the
+                How to Order section or through the Contact page on our
+                website.
+              </p>
+            </details>
+
+          </div>
+        </div>
+      </div>
+    </section>
     </motion.main>
   );
 };
